@@ -22,6 +22,7 @@ jobs:
       - run: pnpm turbo run typecheck
       - run: pnpm turbo run test
       - run: pnpm turbo run lint
+      - run: pnpm --filter @cryptoedge/web build
 
   migrations:
     name: D1 migrations apply cleanly

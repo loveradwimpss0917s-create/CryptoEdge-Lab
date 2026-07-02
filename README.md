@@ -4,7 +4,32 @@
 
 **設計の最優先事項は「月額 ¥0 (Cloudflare Free + GitHub Free) で数年間、毎日動き続けること」** — 性能より持続性 (docs/00 §3-0)。無料枠の予算管理は docs/13 が正典。
 
-**現在の状態**: 設計フェーズ完了 (v2: 無料運用前提へ全面改訂済み)。`docs/` 配下の設計書群が実装の一次入力である。
+**現在の状態**: 設計フェーズ完了、実装 Phase 0–3 (基盤・ingest/api Worker・研究エンジン・Web SPA + PDF 54 件シード) 完了。`docs/` 配下の設計書群が実装の一次入力である。
+
+## クイックスタート (開発)
+
+```
+pnpm install
+pnpm exec wrangler d1 migrations apply cryptoedge --local --config apps/api/wrangler.jsonc
+pnpm exec wrangler d1 execute cryptoedge --local --config apps/api/wrangler.jsonc --file seeds/0001_pdf_edges.sql
+pnpm turbo run typecheck test lint   # 全パッケージ検証
+pnpm --filter @cryptoedge/api exec wrangler dev --local   # api Worker (localhost:8787)
+pnpm --filter @cryptoedge/web dev                          # web SPA 開発サーバ
+cd research && uv sync --extra dev && uv run pytest         # Python 研究パッケージ
+```
+
+## 実装済みコンポーネント
+
+| コンポーネント | パス | 内容 |
+|---|---|---|
+| モノレポ基盤 | `packages/schema`, `packages/shared` | D1 型・DSL・Edge 状態機械・/internal 契約 (TS↔Python 共有ゴールデンフィクスチャ付き) |
+| ingest Worker | `workers/ingest` | Cron 4本・D1 タスクキュー・binance/deribit/alternative.me アダプタ・DSL 評価器 |
+| api Worker | `apps/api` | Hono API (`/api/v1/*` Cloudflare Access 保護, `/internal/*` Bearer 保護)、Edge ライフサイクルサービス |
+| research パッケージ | `research/` | EEP (metrics/walk-forward/permutation/bootstrap/DSR/verdict)・DSL 評価器・ルールベースレジーム分類器 |
+| web SPA | `apps/web` | React + Vite + TanStack Router/Query。Today・Edge Board・Edge Dossier |
+| PDF シードデータ | `seeds/0001_pdf_edges.sql` | 54 件の Edge 候補 (P0 の 4 件は signal_spec 付き) |
+
+未実装 (ロードマップ P2 以降, `docs/09`): Discovery Engine スクリーニング、HMM レジーム、CUSUM 劣化検知、Research Pack 生成、Portfolio/Explorer 画面。
 
 ## 設計書 (実装はここから読む)
 

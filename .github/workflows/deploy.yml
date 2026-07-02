@@ -1,0 +1,39 @@
+name: deploy
+
+# docs/12 §1: main-branch pushes deploy both Workers. D1 migrations run
+# first so a deploy never ships code expecting a schema that isn't there
+# yet (docs/02 header: migrations are forward-only, so this is always safe
+# to run repeatedly).
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @cryptoedge/web build
+      - name: Apply D1 migrations
+        run: pnpm exec wrangler d1 migrations apply cryptoedge --remote --config apps/api/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Deploy api Worker (serves the built SPA via Static Assets)
+        run: pnpm exec wrangler deploy --config apps/api/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Deploy ingest Worker
+        run: pnpm exec wrangler deploy --config workers/ingest/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
