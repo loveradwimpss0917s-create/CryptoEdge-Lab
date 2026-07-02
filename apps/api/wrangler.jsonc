@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cryptoedge-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  // docs/01 §4.1: Free plan, 2 Workers total (api + ingest). No Queues, no
+  // Workers Paid features. Static Assets serves the web SPA from this same
+  // Worker so requests to it don't count against the Free request quota.
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cryptoedge",
+      "database_id": "REPLACE_WITH_WRANGLER_D1_CREATE_OUTPUT",
+      "migrations_dir": "../../migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "CONFIG",
+      "id": "REPLACE_WITH_WRANGLER_KV_CREATE_OUTPUT"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "LAKE",
+      "bucket_name": "cryptoedge-lake"
+    }
+  ]
+}

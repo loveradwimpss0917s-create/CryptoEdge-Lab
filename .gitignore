@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.turbo/
+.wrangler/
+*.log
+*.tsbuildinfo
+.env
+.env.local
+.DS_Store
+coverage/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# uv
+research/.venv/
