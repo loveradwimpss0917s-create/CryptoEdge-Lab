@@ -1,0 +1,174 @@
+// `/internal/*` — research-worker's (GitHub Actions) write path into D1
+// (docs/08 "Internal", docs/01 §5: research-worker never touches D1
+// directly, only through here, so schema validation/audit stay centralized).
+
+import { Hono } from "hono";
+import { newId } from "@cryptoedge/shared";
+import {
+  jobStatusUpdateSchema,
+  startRunRequestSchema,
+  submitCorrelationsRequestSchema,
+  submitFindingsRequestSchema,
+  submitMetricsRequestSchema,
+  submitRegimesRequestSchema,
+  submitVerdictRequestSchema
+} from "@cryptoedge/schema";
+import type { Env } from "../env.js";
+import { audit } from "../services/audit.js";
+
+export const internalRoute = new Hono<{ Bindings: Env }>();
+
+internalRoute.get("/jobs", async (c) => {
+  const status = c.req.query("status") ?? "queued";
+  const limit = Number(c.req.query("limit") ?? "5");
+  if (status === "queued") {
+    // Atomic claim: move up to `limit` queued jobs to 'dispatched' in one statement.
+    const { results } = await c.env.DB.prepare(
+      `UPDATE jobs SET status = 'dispatched'
+       WHERE job_id IN (
+         SELECT job_id FROM jobs WHERE status = 'queued' ORDER BY priority ASC, created_at ASC LIMIT ?1
+       )
+       RETURNING *`
+    )
+      .bind(limit)
+      .all();
+    return c.json({ jobs: results ?? [] });
+  }
+  const { results } = await c.env.DB.prepare(`SELECT * FROM jobs WHERE status = ?1 ORDER BY created_at DESC LIMIT ?2`)
+    .bind(status, limit)
+    .all();
+  return c.json({ jobs: results ?? [] });
+});
+
+internalRoute.post("/jobs/:id/status", async (c) => {
+  const jobId = c.req.param("id");
+  const body = jobStatusUpdateSchema.parse(await c.req.json());
+  const finishedAt = body.status === "done" || body.status === "failed" ? Date.now() : null;
+  await c.env.DB.prepare(
+    `UPDATE jobs SET status = ?1, error = ?2, result_ref = ?3, started_at = COALESCE(started_at, ?4), finished_at = ?5 WHERE job_id = ?6`
+  )
+    .bind(body.status, body.error ?? null, body.result_ref ?? null, Date.now(), finishedAt, jobId)
+    .run();
+  return c.json({ job_id: jobId, status: body.status });
+});
+
+internalRoute.post("/runs", async (c) => {
+  const body = startRunRequestSchema.parse(await c.req.json());
+  const runId = newId();
+  await c.env.DB.prepare(
+    `INSERT INTO eval_runs
+       (run_id, edge_version_id, protocol_version, run_kind, dataset_hash, snapshot_id, seed, config, status, started_at, requested_by, git_sha)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'running', ?9, ?10, ?11)`
+  )
+    .bind(
+      runId,
+      body.edge_version_id,
+      body.protocol_version,
+      body.run_kind,
+      body.dataset_hash,
+      body.snapshot_id,
+      body.seed,
+      JSON.stringify(body.config),
+      Date.now(),
+      body.requested_by,
+      body.git_sha
+    )
+    .run();
+  return c.json({ run_id: runId }, 201);
+});
+
+internalRoute.post("/runs/:id/metrics", async (c) => {
+  const runId = c.req.param("id");
+  const body = submitMetricsRequestSchema.parse(await c.req.json());
+  const stmt = c.env.DB.prepare(
+    `INSERT INTO eval_metrics (run_id, segment, metric, value, ci_lo, ci_hi, meta)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT (run_id, segment, metric) DO UPDATE SET
+       value = excluded.value, ci_lo = excluded.ci_lo, ci_hi = excluded.ci_hi, meta = excluded.meta`
+  );
+  await c.env.DB.batch(
+    body.metrics.map((m) =>
+      stmt.bind(
+        runId,
+        m.segment,
+        m.metric,
+        m.value,
+        m.ci_lo ?? null,
+        m.ci_hi ?? null,
+        m.meta ? JSON.stringify(m.meta) : null
+      )
+    )
+  );
+  return c.json({ run_id: runId, written: body.metrics.length }, 201);
+});
+
+internalRoute.post("/runs/:id/verdict", async (c) => {
+  const runId = c.req.param("id");
+  const body = submitVerdictRequestSchema.parse(await c.req.json());
+  const now = Date.now();
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `INSERT INTO verdicts (run_id, verdict, score, reasons, thresholds_version, decided_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+       ON CONFLICT (run_id) DO UPDATE SET
+         verdict = excluded.verdict, score = excluded.score, reasons = excluded.reasons,
+         thresholds_version = excluded.thresholds_version, decided_at = excluded.decided_at`
+    ).bind(runId, body.verdict, body.score ?? null, JSON.stringify(body.reasons), body.thresholds_version, now),
+    c.env.DB.prepare(`UPDATE eval_runs SET status = 'done', finished_at = ?1 WHERE run_id = ?2`).bind(now, runId)
+  ]);
+  await audit(c.env, "system:research-worker", "run.verdict", `run:${runId}`, { verdict: body.verdict });
+  return c.json({ run_id: runId, verdict: body.verdict }, 201);
+});
+
+internalRoute.post("/findings", async (c) => {
+  const body = submitFindingsRequestSchema.parse(await c.req.json());
+  const stmt = c.env.DB.prepare(
+    `INSERT INTO discovery_findings (finding_id, batch_id, kind, spec, stats, fdr_q, novelty, status, created_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'new', ?8)`
+  );
+  const now = Date.now();
+  await c.env.DB.batch(
+    body.findings.map((f) =>
+      stmt.bind(f.finding_id, f.batch_id, f.kind, JSON.stringify(f.spec), JSON.stringify(f.stats), f.fdr_q, f.novelty ?? null, now)
+    )
+  );
+  return c.json({ written: body.findings.length }, 201);
+});
+
+internalRoute.post("/regimes", async (c) => {
+  const body = submitRegimesRequestSchema.parse(await c.req.json());
+  const stmt = c.env.DB.prepare(
+    `INSERT INTO regimes_daily (dt, trend, vol, liquidity, hmm_state, probs, model_version, computed_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+     ON CONFLICT (dt) DO UPDATE SET
+       trend = excluded.trend, vol = excluded.vol, liquidity = excluded.liquidity,
+       hmm_state = excluded.hmm_state, probs = excluded.probs, model_version = excluded.model_version,
+       computed_at = excluded.computed_at`
+  );
+  const now = Date.now();
+  await c.env.DB.batch(
+    body.regimes.map((r) =>
+      stmt.bind(r.dt, r.trend, r.vol, r.liquidity, r.hmm_state ?? null, r.probs ? JSON.stringify(r.probs) : null, r.model_version, now)
+    )
+  );
+  return c.json({ written: body.regimes.length }, 201);
+});
+
+internalRoute.post("/correlations", async (c) => {
+  const body = submitCorrelationsRequestSchema.parse(await c.req.json());
+  const stmt = c.env.DB.prepare(
+    `INSERT INTO edge_correlations (edge_a, edge_b, window, signal_overlap, return_corr, computed_at, run_batch)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT (edge_a, edge_b, window) DO UPDATE SET
+       signal_overlap = excluded.signal_overlap, return_corr = excluded.return_corr,
+       computed_at = excluded.computed_at, run_batch = excluded.run_batch`
+  );
+  const now = Date.now();
+  await c.env.DB.batch(
+    body.correlations.map((corr) => {
+      const [a, b] = corr.edge_a < corr.edge_b ? [corr.edge_a, corr.edge_b] : [corr.edge_b, corr.edge_a];
+      return stmt.bind(a, b, corr.window, corr.signal_overlap ?? null, corr.return_corr ?? null, now, corr.run_batch ?? null);
+    })
+  );
+  return c.json({ written: body.correlations.length }, 201);
+});

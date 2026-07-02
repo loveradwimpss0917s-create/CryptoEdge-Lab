@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cryptoedge-ingest",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  // docs/01 §4.6: 4 Cron Triggers total, no Queues (Workers Free plan).
+  // tick-5m also absorbs what a 1m schedule would otherwise need (docs/01 §3.1).
+  "triggers": {
+    "crons": [
+      "*/5 * * * *",
+      "17 * * * *",
+      "23 1 * * *",
+      "0 3 * * 0"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cryptoedge",
+      "database_id": "REPLACE_WITH_WRANGLER_D1_CREATE_OUTPUT",
+      "migrations_dir": "../../migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "CONFIG",
+      "id": "REPLACE_WITH_WRANGLER_KV_CREATE_OUTPUT"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "LAKE",
+      "bucket_name": "cryptoedge-lake"
+    }
+  ]
+}

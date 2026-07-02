@@ -45,8 +45,8 @@ export interface GuardContext {
     cusumAlarm: boolean;
   };
   any_to_REJECTED?: {
-    fullRunVerdict?: "ADOPT" | "WATCH" | "REJECT";
-    userInitiated?: boolean;
+    fullRunVerdict?: "ADOPT" | "WATCH" | "REJECT" | undefined;
+    userInitiated?: boolean | undefined;
   };
 }
 
