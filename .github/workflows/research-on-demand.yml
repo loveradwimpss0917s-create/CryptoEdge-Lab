@@ -1,0 +1,31 @@
+name: research-on-demand
+
+# docs/01 §3.2, docs/08 POST /api/v1/edges/{id}/eval: the api Worker
+# dispatches this when a user requests a screen/full run from the UI.
+on:
+  repository_dispatch:
+    types: [research-on-demand]
+  workflow_dispatch: {}
+
+jobs:
+  eep-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # docs/09 §3: ~10-15min per Edge full run
+    defaults:
+      run:
+        working-directory: research
+    env:
+      CRYPTOEDGE_API_URL: ${{ secrets.CRYPTOEDGE_API_URL }}
+      RESEARCH_API_TOKEN: ${{ secrets.RESEARCH_API_TOKEN }}
+      CRYPTOEDGE_R2_ENDPOINT: ${{ secrets.CRYPTOEDGE_R2_ENDPOINT }}
+      CRYPTOEDGE_R2_BUCKET: ${{ secrets.CRYPTOEDGE_R2_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      GITHUB_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.5.x"
+      - run: uv sync
+      - run: uv run python -m cryptoedge_research.jobs.on_demand

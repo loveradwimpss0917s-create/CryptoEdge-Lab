@@ -18,6 +18,18 @@ import { audit } from "../services/audit.js";
 
 export const internalRoute = new Hono<{ Bindings: Env }>();
 
+// research-worker needs the signal_spec/params/cost_model to actually run
+// the EEP (docs/05 §3) — the write-only routes below don't give it a way
+// to read that back, so this is the one read route on /internal.
+internalRoute.get("/edge-versions/:id", async (c) => {
+  const versionId = c.req.param("id");
+  const version = await c.env.DB.prepare(`SELECT * FROM edge_versions WHERE version_id = ?1`)
+    .bind(versionId)
+    .first();
+  if (!version) return c.json({ type: "about:blank", title: "edge_version not found", status: 404 }, 404);
+  return c.json({ edge_version: version });
+});
+
 internalRoute.get("/jobs", async (c) => {
   const status = c.req.query("status") ?? "queued";
   const limit = Number(c.req.query("limit") ?? "5");

@@ -1,0 +1,126 @@
+{
+  "_comment": "docs/11 §4 contract fixture. Both workers/ingest/src/signals/dsl-evaluator.ts and research/src/cryptoedge_research/dsl/evaluator.py must reproduce expected_fires exactly for every vector here. Add a vector whenever the DSL (docs/05 §9) grows a new operator.",
+  "vectors": [
+    {
+      "name": "simple cmp greater-than",
+      "when": { "cmp": [{ "feature": "f1" }, ">", 2] },
+      "timestamps": [0, 3600000, 7200000],
+      "features": { "f1": [1, 3, 2] },
+      "events": [[], [], []],
+      "regimes": [null, null, null],
+      "expected_fires": [false, true, false]
+    },
+    {
+      "name": "cmp against another feature (not a literal)",
+      "when": { "cmp": [{ "feature": "a" }, ">=", { "feature": "b" }] },
+      "timestamps": [0, 1, 2],
+      "features": { "a": [1, 5, 3], "b": [2, 5, 4] },
+      "events": [[], [], []],
+      "regimes": [null, null, null],
+      "expected_fires": [false, true, false]
+    },
+    {
+      "name": "lagged feature reference",
+      "when": { "cmp": [{ "feature": "f1", "lag": 1 }, ">", 0] },
+      "timestamps": [0, 1, 2, 3],
+      "features": { "f1": [-1, 5, -5, 10] },
+      "events": [[], [], [], []],
+      "regimes": [null, null, null, null],
+      "expected_fires": [false, false, true, false]
+    },
+    {
+      "name": "and / or / not composition",
+      "when": {
+        "and": [
+          { "cmp": [{ "feature": "f1" }, ">", 0] },
+          { "not": { "cmp": [{ "feature": "f2" }, "<", 0] } }
+        ]
+      },
+      "timestamps": [0, 1, 2],
+      "features": { "f1": [1, 1, -1], "f2": [1, -1, 1] },
+      "events": [[], [], []],
+      "regimes": [null, null, null],
+      "expected_fires": [true, false, false]
+    },
+    {
+      "name": "or across two independent conditions",
+      "when": {
+        "or": [{ "cmp": [{ "feature": "f1" }, ">", 5] }, { "cmp": [{ "feature": "f2" }, "<", -5] }]
+      },
+      "timestamps": [0, 1, 2],
+      "features": { "f1": [10, 0, 0], "f2": [0, -10, 0] },
+      "events": [[], [], []],
+      "regimes": [null, null, null],
+      "expected_fires": [true, true, false]
+    },
+    {
+      "name": "event with min_magnitude threshold",
+      "when": { "event": { "type": "usdt_mint", "min_magnitude": 1000000000 } },
+      "timestamps": [0, 1, 2],
+      "features": {},
+      "events": [
+        [{ "type": "usdt_mint", "magnitude": 500000000 }],
+        [{ "type": "usdt_mint", "magnitude": 2000000000 }],
+        []
+      ],
+      "regimes": [null, null, null],
+      "expected_fires": [false, true, false]
+    },
+    {
+      "name": "regime filter (trend + liquidity)",
+      "when": { "regime": { "trend": ["up"], "liquidity": ["normal"] } },
+      "timestamps": [0, 1, 2, 3],
+      "features": {},
+      "events": [[], [], [], []],
+      "regimes": [
+        { "trend": "up", "vol": "low", "liquidity": "normal" },
+        { "trend": "down", "vol": "low", "liquidity": "normal" },
+        { "trend": "up", "vol": "high", "liquidity": "stressed" },
+        null
+      ],
+      "expected_fires": [true, false, false, false]
+    },
+    {
+      "name": "time-of-day and day-of-week filter (EC-018 seed shape)",
+      "when": { "time": { "utc_hour_in": [21, 22], "dow_in": [1, 2, 3, 4, 5] } },
+      "timestamps": [
+        1751490000000,
+        1751497200000,
+        1751403600000
+      ],
+      "_timestamps_note": "2025-07-02T21:00Z (Wed), 2025-07-02T23:00Z (Wed), 2025-07-01T21:00Z (Tue)",
+      "features": {},
+      "events": [[], [], []],
+      "regimes": [null, null, null],
+      "expected_fires": [true, false, true]
+    },
+    {
+      "name": "missing feature data yields false, not an error",
+      "when": { "cmp": [{ "feature": "does_not_exist" }, ">", 0] },
+      "timestamps": [0, 1],
+      "features": { "other": [1, 2] },
+      "events": [[], []],
+      "regimes": [null, null],
+      "expected_fires": [false, false]
+    },
+    {
+      "name": "deeply nested composition mirroring the DSL doc example",
+      "when": {
+        "and": [
+          { "cmp": [{ "feature": "funding_z_90d" }, ">", 2] },
+          { "not": { "regime": { "liquidity": ["stressed"] } } },
+          { "time": { "utc_hour_in": [21, 22], "dow_in": [1, 2, 3, 4, 5] } }
+        ]
+      },
+      "timestamps": [1751490000000, 1751490000000, 1751403600000],
+      "features": { "funding_z_90d": [3, 3, 1] },
+      "events": [[], [], []],
+      "regimes": [
+        { "trend": "up", "vol": "low", "liquidity": "normal" },
+        { "trend": "up", "vol": "low", "liquidity": "stressed" },
+        { "trend": "up", "vol": "low", "liquidity": "normal" }
+      ],
+      "expected_fires": [true, false, false]
+    }
+  ]
+}
