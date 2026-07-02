@@ -76,6 +76,43 @@ Index: `(venue, symbol)`。保持: 永続。
 
 Index: `(status, severity)`, `(stream_id, detected_at)`。保持: 永続。
 
+#### `ingest_tasks` — 収集リトライキュー (**Cloudflare Queues の無料代替**, docs/01 §3.1)
+
+| カラム | 型 | 制約 | 説明 |
+|---|---|---|---|
+| task_id | TEXT | **PK** | ULID |
+| stream_id | TEXT | NOT NULL | 対象ストリーム |
+| window_start, window_end | INTEGER | NOT NULL | 再取得範囲 |
+| attempts | INTEGER | NOT NULL DEFAULT 0 | ≥5 で `dead` → dq_issues 起票 |
+| next_attempt_at | INTEGER | NOT NULL | 指数バックオフ (5m→15m→1h→6h→24h) をこの値で表現 |
+| status | TEXT | NOT NULL DEFAULT 'pending' | `pending` / `dead` / `done` |
+| last_error | TEXT | | |
+| created_at | INTEGER | NOT NULL | |
+
+Index: `(status, next_attempt_at)`。保持: done/dead は 30 日で削除可 (dead は dq_issues に転記済み)。
+5m tick が毎回 `status='pending' AND next_attempt_at<=now` を最大 10 件消化する (docs/01 §3.1)。
+
+#### `latest_snapshots` — 最新値ボード (**KV スナップショットの無料代替**: KV Free は書込 1,000/日で不足)
+
+| カラム | 型 | 制約 | 説明 |
+|---|---|---|---|
+| key | TEXT | **PK** | `funding:binance:BTCUSDT` 等 ~12 キー |
+| value | TEXT | NOT NULL | JSON `{v, ts, ingested_at}` |
+| updated_at | INTEGER | NOT NULL | |
+
+UPSERT (~12 キー × 288 回/日 ≈ 3.5K 行書込/日 — D1 の書込枠 100K/日 に対し軽微)。`/market/overview` はこの表 1 read で組成。
+
+#### `quota_usage` — 無料枠ヘッドルーム記録 (docs/13 §7)
+
+| カラム | 型 | 制約 | 説明 |
+|---|---|---|---|
+| dt | TEXT | PK① | `YYYY-MM-DD` |
+| resource | TEXT | PK② | `d1_size_bytes` / `d1_writes` / `d1_reads` / `r2_bytes` / `r2_class_a` / `worker_requests` / `subreq_peak` / `gha_minutes_month` / `kv_writes` |
+| value | REAL | NOT NULL | 実測値 |
+| budget | REAL | NOT NULL | その時点の予算値 (docs/13 §1) |
+
+保持: 永続 (容量トレンド分析に使う)。60%/80% 閾値の警告ロジックは api/ingest が本表を参照。
+
 #### `jobs` — 研究ジョブキュー
 
 | カラム | 型 | 制約 | 説明 |
@@ -131,8 +168,8 @@ Index: `(entity, at)`。保持: 永続。
 | ingested_at | INTEGER | NOT NULL | |
 
 **PK**: `(instrument_id, tf, ts)`。追加 Index: `(tf, ts)`。
-保持: `1m` = D1 に 90 日 (超過分は週次で R2 Parquet へ)、`5m` = 400 日、`1h`/`1d` = 永続。
-確定足のみ保存 (未確定足は KV `latest:` のみ)。
+保持 (無料枠版, docs/13 §2.1): `1m` = D1 に **30 日** (超過分は週次で R2 Parquet へ)、`5m` = **180 日**、`1h`/`1d` = 永続。
+確定足のみ保存 (未確定足は `latest_snapshots` のみ)。
 
 #### `funding_rates`
 
@@ -157,7 +194,7 @@ Index: `(entity, at)`。保持: 永続。
 | oi_usd | REAL | | |
 | ingested_at | INTEGER | NOT NULL | |
 
-**PK**: `(instrument_id, ts)`。保持: 5m 粒度 400 日 → 1h に間引いて永続 (アーカイブ時に集約)。
+**PK**: `(instrument_id, ts)`。保持: 5m 粒度 **180 日** → R2 (アーカイブ時に 1h 集約版を D1 に残す)。
 
 #### `long_short_ratios`
 
@@ -171,7 +208,7 @@ Index: `(entity, at)`。保持: 永続。
 | ls_ratio | REAL | | long/short |
 | ingested_at | INTEGER | NOT NULL | |
 
-保持: 400 日 → R2。
+保持: **180 日** → R2。
 
 #### `liquidations_5m` — 清算 (5 分バケット集計)
 
@@ -186,7 +223,7 @@ Index: `(entity, at)`。保持: 永続。
 | source_id | TEXT | NOT NULL | `binance_ws` / `coinglass` |
 | ingested_at | INTEGER | NOT NULL | |
 
-保持: 400 日 → R2。注意: Binance forceOrder ストリームは 2021 年以降サンプリング配信 (完全ではない)。`source_id` で系列を区別し、混ぜない (docs/03 §2.4)。
+保持: **180 日** → R2。注意: Binance forceOrder ストリームは 2021 年以降サンプリング配信 (完全ではない)。`source_id` で系列を区別し、混ぜない (docs/03 §2.4)。
 
 #### `orderbook_snaps` — 板スナップショット (5 分)
 
@@ -200,7 +237,7 @@ Index: `(entity, at)`。保持: 永続。
 | imbalance | REAL | | (bid−ask)/(bid+ask) depth |
 | ingested_at | INTEGER | NOT NULL | |
 
-保持: 180 日 → R2。V1 はスナップのみ (L2 録画は V3, docs/01 §7)。
+保持: **90 日** → R2。V1 はスナップのみ (L2 録画は V3, docs/01 §7)。
 
 #### `options_surface` — オプション集計 (Deribit)
 
@@ -494,30 +531,22 @@ feature_defs (R2 features の台帳) / regimes_daily / events (独立参照系)
 jobs / dq_issues / audit_log / settings / ai_outputs (運用系)
 ```
 
-## 4. 容量試算 (V1, BTC 中心 + ETH)
+## 4. 容量試算 (V1, BTC 中心 + ETH) — **D1 Free 5GB 前提**
 
-| テーブル | 行/年 | 概算サイズ/年 |
-|---|---|---|
-| candles 1m (2 instruments, 90日のみ) | 常時 ~26 万行 | 40 MB (定常) |
-| candles 5m/1h/1d | ~44 万 | 60 MB |
-| open_interest + LS + liquidations + orderbook (5m×複数) | ~250 万 | 350 MB |
-| metrics (日次 ~80 系列 + 5m ~10 系列) | ~110 万 | 120 MB |
-| options_surface | ~9 千 | 2 MB |
-| events | ~5 千 | 2 MB |
-| 研究系 (runs/metrics/signals) | ~50 万 | 80 MB |
-| **合計** | | **~0.7 GB/年 + 定常 0.1 GB** |
-
-400 日ローテーション後の定常サイズ ≈ 1.2 GB。10 GB 上限に対し十分な余裕。
+詳細な予算は docs/13 §2 が正典。要約: 定常 ~0.7 GB + 研究系 ~0.1 GB/年 → **5 年運用でも 5 GB の 40% 未満**。
+書込み予算: 定常 ~15K 行/日 (Free 上限 100K 行/日 の 15%)。読取りは Actions が R2 Parquet を読む設計により UI/internal のみで <100K 行/日。
+D1 使用率 50% (2.5GB) 到達で Telegram 警告 → 保持期間短縮 or Workers Paid 化判断 (docs/13 §6)。
 
 ## 5. 保持期間・アーカイブ (週次 `archive` ジョブ)
 
-| データ | D1 保持 | その後 |
+| データ | D1 保持 (無料枠版) | その後 |
 |---|---|---|
-| candles 1m | 90 日 | R2 `curated/market/candles_1m/` Parquet (永続) |
-| 5m 粒度系 (OI, LS, liq, orderbook, metrics 5m) | 400 日 (orderbook 180 日) | R2 Parquet (永続) |
+| candles 1m | **30 日** | R2 `curated/market/candles_1m/` Parquet (永続) |
+| 5m 粒度系 (OI, LS, liq, metrics 5m) | **180 日** (orderbook **90 日**) | R2 Parquet (永続) |
 | 1h/1d 系, funding, options_surface, events | 永続 (D1) | 月次で R2 にもミラー (バックアップ兼研究入力) |
-| raw NDJSON (R2) | — | 永続。ストレージ ~数 GB/年、$1/月未満 |
+| raw NDJSON (R2, 無圧縮 — Worker CPU 10ms 制約で gzip しない) | — | **90 日で Parquet 化検証後に削除** (weekly Actions) |
 | 研究系テーブル | 永続 | 月次 R2 ミラー (バックアップ) |
+| ingest_tasks (done/dead) | 30 日 | 削除 (dead は dq_issues に転記済み) |
 
 アーカイブジョブの完全性検査: 行数 + min/max ts + チェックサムを manifest 化し、一致確認後に D1 から DELETE (docs/12 §3)。
 

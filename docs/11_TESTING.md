@@ -10,7 +10,7 @@
 | Unit (Py) | pytest | features 変換、EEP 各ステージ、metrics 計算 | 毎 PR |
 | 統計妥当性 | pytest (専用スイート) | §3 | 毎 PR (高速版) + nightly (フル) |
 | 契約テスト | Vitest + pytest 共有フィクスチャ | §4 | 毎 PR |
-| 統合 | wrangler dev + Miniflare | Cron→Queue→fetcher→D1 の一連 (モック API)、/internal フロー | 毎 PR |
+| 統合 | wrangler dev + Miniflare | Cron tick→ingest_tasks→D1/R2 の一連 (モック API)、/internal フロー | 毎 PR |
 | E2E | Playwright | 主要フロー: 朝ループ / 昇格 / 評価実行→Dossier 反映 | main merge 時 |
 | データ品質 (常時) | 本番 DQ ルール自体 | 収集の継続的検証 (テストが本番に常駐する設計) | 常時 |
 
@@ -28,7 +28,7 @@
 
 ## 4. DSL 二重実装の契約テスト
 - `packages/schema/fixtures/dsl-golden.json`: {spec, 入力系列, 期待発火列} のベクトル 50+ 件
-- TS 評価器 (fetcher) と Py 評価器 (research) の両 CI が同一ファイルを読んで一致を検証。**このテストが落ちたら何よりも先に直す** (バックテストとペーパーの同一性が崩れるため)
+- TS 評価器 (ingest) と Py 評価器 (research) の両 CI が同一ファイルを読んで一致を検証。**このテストが落ちたら何よりも先に直す** (バックテストとペーパーの同一性が崩れるため)
 - /internal API の JSON も同様に zod ↔ pydantic の共有フィクスチャで契約テスト
 
 ## 5. スキーマ・マイグレーション

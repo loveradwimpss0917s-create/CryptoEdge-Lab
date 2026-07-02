@@ -30,7 +30,7 @@
 | POST `/findings/{id}/promote` | Edge 作成へ (body: hypothesis, rationale, ...) |
 | POST `/findings/{id}/dismiss` | 却下 (reason 必須) |
 | GET `/discovery/config` / PUT 同 | 試行空間設定 (θ グリッド等)。PUT は試行空間サイズを再計算して返す |
-| POST `/discovery/import-literature` | テキスト → AI で Edge IDEA ドラフト生成 (202) |
+| POST `/discovery/explorer-candidates` | Explorer (ブラウザ内 DuckDB) で発見した条件式を次回 weekly スクリーニング候補として保存 |
 
 ### Market / Data
 
@@ -51,13 +51,15 @@
 | POST `/health/refill` | 手動リフィル (body: stream_id, from, to) → jobs |
 | GET `/health/sources` / PATCH `/health/sources/{id}` | ソース有効/無効 |
 
-### Reports / AI / Jobs / Settings
+### Reports / Research Pack (AI ハンドオフ) / Jobs / Settings
 
 | Method Path | 説明 |
 |---|---|
-| GET `/briefings?date=` / GET `/briefings/latest` | ブリーフィング (本文は R2 署名 URL) |
+| GET `/briefings?date=` / GET `/briefings/latest` | ブリーフィング (テンプレ生成, 本文は R2) |
 | GET `/reports?kind=` | 週次等アーカイブ |
-| POST `/ai/dossier-draft` | body: edge_id → Dossier 文章ドラフト (202) |
+| GET `/packs?kind=&entity=` | 生成済み Research Pack 一覧 (docs/07 §2) |
+| POST `/packs/generate` | body: pack_kind, entity, size(S/M/L) → Pack を同期生成 (テンプレのみ・AI 不使用) して R2 パス返却 |
+| POST `/packs/{id}/response` | AI 回答の貼り戻し。zod 検証 → ai_outputs (source='handoff') に記録 |
 | GET `/actions` | Action Queue (承認待ち遷移 + findings new + DQ open の合成) |
 | GET `/jobs?status=` / GET `/jobs/{id}` / POST `/jobs/{id}/cancel` | ジョブ管理 |
 | GET `/settings` / PUT `/settings/{key}` | 閾値セット等 (PUT は version インクリメント) |
@@ -77,7 +79,14 @@
 | POST `/internal/correlations` | edge_correlations 更新 |
 | POST `/internal/briefing-ready` | nightly 完了通知 → AI ブリーフィング生成をトリガ |
 
-## 2. キャッシュ TTL 規約 (KV)
+### Lake パススルー (ブラウザ内 DuckDB 用)
+
+| Method Path | 説明 |
+|---|---|
+| GET `/lake/{path}` | R2 curated/features Parquet の認証付きパススルー (**Range リクエスト対応必須** — DuckDB-WASM が部分読みする)。immutable キャッシュヘッダ |
+| GET `/lake/catalog` | 利用可能な Parquet データセットのカタログ (パス・スキーマ・期間) |
+
+## 2. キャッシュ TTL 規約 (**Cache API** — KV はキャッシュに使わない, docs/13 §1)
 
 | パターン | TTL |
 |---|---|
@@ -89,7 +98,7 @@
 
 ## 3. 共通挙動
 
-- 書込み系は `Idempotency-Key` ヘッダ対応 (KV に 24h 記録)
+- 書込み系は `Idempotency-Key` ヘッダ対応 (D1 に 24h 記録 — KV 書込枠を使わない)
 - 全書込みは audit_log 記録
-- レート制限: ユーザー系 300 req/min (KV カウンタ)、AI 系エンドポイントは 10 req/min
-- SSE `/api/v1/stream` (V2): jobs 完了・シグナル発火・DQ critical を push
+- レート制限: 単一ユーザ + Access 前提のため簡易 (D1 カウンタで 300 req/min)
+- リアルタイム更新はポーリング (30–60s)。SSE は V2 以降に必要性が実証されてから (docs/01 §5)

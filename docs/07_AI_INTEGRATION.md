@@ -1,59 +1,70 @@
-# 07. AI 活用設計
+# 07. AI 活用設計 — 「AI ハンドオフ」方式 (常時 API 不使用)
 
-> 原則 (docs/00 §3-9): **AI は仮説生成と要約、判定は統計パイプライン**。AI 出力はすべて `ai_outputs` に記録され、`draft` → 人間レビューを経る。
-> 経路: api Worker → Cloudflare AI Gateway → Anthropic API (`claude-sonnet-5` 主 / 軽量タスクは `claude-haiku-4-5`)。フォールバック: Workers AI (Llama 系, 品質低下を許容する要約のみ)。
+> 方針転換 (v2): AI API を常時組み込まない。**プラットフォームの仕事は「AI に渡しやすい研究データ (Research Pack) を自動生成すること」**であり、解析は研究者が必要時に Claude / ChatGPT / Gemini へ持ち込む。運用コスト ¥0。
+> 原則は不変: AI は仮説生成と要約のため。Verdict 判定・数値計算には決して使わない。
 
-## 1. 使う場所 / 使わない場所
+## 1. なぜハンドオフ方式か
 
-| 用途 | AI | 理由 |
+1. **コスト**: 日次ブリーフィングを LLM API で生成すると月 $5–15。年単位では無視できない。テンプレート生成 + 必要時ハンドオフなら ¥0
+2. **品質**: 研究者が対話的に使う frontier モデル (Claude 等の Web UI) は、API の一撃生成より深掘り・反問ができ、研究用途ではむしろ質が高い
+3. **可搬性**: 特定ベンダーの API に依存しない。渡す先は Claude でも ChatGPT でも Gemini でもよい
+4. **拡張性**: Research Pack は構造化されているため、将来 API を繋ぐ場合 (§6) も同じ Pack を入力にするだけ
+
+## 2. Research Pack — AI に渡す標準成果物
+
+**定義**: 1 つの研究文脈 (日次状況 / 1 Edge / 1 finding / DQ 状況) を、LLM が追加説明なしで解析できる自己完結 Markdown (+ 添付 JSON/CSV)。R2 `packs/` に自動生成され、UI の **[Copy for AI]** ボタンでクリップボードへ、または .md ダウンロード。
+
+### Pack の共通構造 (テンプレは apps/api/src/packs/ + research/packs/ で管理、prompt_version 相当の pack_version を付与)
+
+```
+1. ROLE & TASK      — 「あなたはクオンツ研究の批評者である。以下を検証し…」(用途別指示文)
+2. CONTEXT          — プラットフォーム前提の最小要約 (EEP の定義、コストモデル、用語)
+3. DATA             — 構造化データ (メトリクス表、CI、レジーム別成績、時系列サマリ)
+4. QUESTIONS        — このPackで AI に聞くべき標準質問リスト (研究者が編集可)
+5. GUARDRAILS       — 「新しい数値を創作しない」「データにない断定をしない」等
+6. APPENDIX         — 生データ CSV (トレード一覧等、トークン予算内に自動トリム)
+```
+
+### Pack の種類
+
+| pack_kind | 生成タイミング | 内容 / 標準質問の例 |
 |---|---|---|
-| 日次ブリーフィング生成 | ✅ Sonnet | 数値→物語の変換は AI の得意領域。入力は構造化 JSON のみ (幻覚抑制) |
-| Edge 仮説生成 (findings への rationale 提案) | ✅ Sonnet | docs/04 §1 の 4 源泉への「接地」候補を提示。採用は人間 |
-| Dossier ドラフト (評価結果の文章化) | ✅ Sonnet | reasons JSON → 読める報告書 |
-| データ品質異常の文脈判定 | ✅ Haiku | DQ-03 スパイクが「本物のテール」か「データ不良」かの一次スクリーニング |
-| 改善提案 (WATCH Edge のパラメータ/条件付け示唆) | ✅ Sonnet | 提案は新 edge_version の draft として出力。試行数コストも明示させる |
-| 文献要約 (ユーザーが貼った論文/記事 → Edge IDEA 化) | ✅ Sonnet | PDF の文献接地文化を継続する導線 |
-| Verdict 判定 | ❌ | 決定論ルールのみ (docs/05 §5) |
-| 数値計算・統計 | ❌ | research-worker の責務。AI に計算させない |
-| シグナル生成 | ❌ | DSL 評価器のみ |
+| `daily_briefing` | 毎日 (daily-light) | 市況・発火・劣化・新 findings のテンプレ生成文 + 「今日注視すべき異変は?」 |
+| `edge_dossier` | full run 完了時 / 随時 | Edge 全証拠。「この Edge の反証仮説を 3 つ挙げよ」「過学習の兆候は?」 |
+| `finding_review` | weekly-heavy | finding 統計 + 4 源泉タグ候補。「経済的根拠を接地できるか、できないなら接地不能と答えよ」 |
+| `decay_investigation` | CUSUM 警報時 | 劣化前後の成績・レジーム・DQ 状況。「劣化原因の仮説を順位付けせよ」 |
+| `dq_review` | DQ critical 時 | 異常値と同時刻の他ソース・events。「データ不良か本物の市場イベントか」 |
+| `improvement` | 手動 | WATCH Edge の fail 理由 + パラメータ空間。「試行数コストを踏まえ、次に試す 1 手は?」 |
+| `literature_import` | 手動 (逆方向) | ユーザーが AI で論文を要約した**結果を貼り戻す**ための入力フォーム様式 (hypothesis/rationale/evidence の JSON スキーマを Pack に同梱し、AI に「この JSON で出力せよ」と指示) |
 
-## 2. 共通実装規約
+### 重要な設計点: 双方向スキーマ
 
-- プロンプトテンプレは `apps/api/src/ai/prompts/` にバージョン付き管理 (`prompt_version` を ai_outputs に記録)
-- **入力は常に構造化データ** (メトリクス JSON、findings 行、DQ issue 行)。生の市場解説を書かせるための Web 検索は行わない (幻覚源)
-- 出力は zod スキーマ強制 (JSON mode)。本文は R2 保存、D1 はメタのみ
-- 月次コスト上限を settings に持ち、AI Gateway の集計で超過時は Haiku に自動格下げ → それでも超過なら停止 (Briefing はテンプレのみで生成継続)
-- 見積り: Briefing 日次 ~15k in / 2k out トークン + 随時タスク → 月 $5–15 想定
+Pack には「AI からの回答をこの JSON スキーマで出力せよ」という**返信様式**を同梱する (rationale ドラフト、劣化原因ランキング等)。UI 側に貼り戻し欄があり、zod 検証を通れば `ai_outputs` (source='handoff') として記録・Dossier に添付される。**AI とのやり取りも研究記録として残る**。
 
-## 3. 日次ブリーフィング (最重要ユースケース)
+## 3. 日次ブリーフィングの生成方式 (AI なしで成立させる)
 
-毎朝 03:00 UTC、research nightly 完了後に生成。入力 (すべて D1/R2 から機械組成):
+daily-light (Actions) が**決定論テンプレート**で生成する:
+- TL;DR はルールベース (優先度: 劣化警報 > DQ critical > 発火損益 > レジーム遷移 > 新 findings)
+- 数値の文章化は定型文 (「usdt-mint-drift が 2 回発火し net +34bps」)
+- 「今日やるべきこと」は Action Queue の上位 3 件をそのまま反映
 
-1. 市況スナップ (価格/RV/funding/レジームラベルの変化)
-2. ペーパー/ACTIVE Edge の昨日の発火・損益・CUSUM 状態
-3. 新 findings 上位 5 (q 値・novelty・効果量)
-4. DQ issues (open)
-5. 実行待ちアクション (承認待ち遷移、再評価予定)
+AI の付加価値 (文脈解釈・異変の物語化) が欲しい日だけ、Briefing 画面の [Copy for AI] で `daily_briefing` Pack を Claude 等に渡す。**ブリーフィングの成立に AI は不要**という点が旧設計との本質的な違い。
 
-出力テンプレ (SCR-01 に表示):
-- **TL;DR 3 行**
-- **今日やるべきこと** (優先順位付き最大 3 件、各 1 クリックで該当画面へのリンク)
-- 変化点の解説 (レジーム遷移・劣化警報があれば)
-- 新発見の紹介 (統計値の言い換えは可、新たな数値の創作は禁止と指示)
+## 4. UI 統合 (docs/06 と対応)
 
-## 4. 仮説生成の詳細 (Discovery 連携)
+- 全 Dossier / finding / DQ issue / Briefing に [Copy for AI] ボタン (pack_kind 自動選択、トークン概算表示付き)
+- Settings に「Pack 既定サイズ (S/M/L = 概算 4k/16k/64k トークン)」設定。L は添付 CSV を多く含む
+- 貼り戻し欄 (`Paste AI response`) は JSON 検証 + プレビュー → 保存で ai_outputs へ
 
-- 新 finding に対し「この統計パターンは docs/04 §1 の 4 源泉のどれで説明できるか。説明できないなら『接地不能』と答えよ」を強制する構造化プロンプト
-- 出力: {grounding: forced_flow|mismatch|info_asymmetry|behavioral|none, rationale_draft, counter_evidence_draft, suggested_evidence_keywords}
-- **「接地不能」と答えさせる選択肢を必ず与える** — AI に無理やり物語を作らせないための設計
-- ユーザーが論文 PDF/URL テキストを貼ると、Edge IDEA (hypothesis/rationale/evidence 込み) のドラフトを生成する「Import from literature」機能 (SCR-04)
+## 5. ローカル/無料の AI 補助 (任意、コスト 0 を崩さない範囲)
 
-## 5. データ品質監視
+| 手段 | 用途 | 位置づけ |
+|---|---|---|
+| Workers AI 無料枠 (日次上限あり) | DQ issue の 3 分類など超軽量タスク | V2 で必要性を再評価。無くても成立する設計を維持 |
+| ブラウザ内 BYO キー | 研究者が自分の API キーをブラウザの localStorage に置き、SPA から直接 Anthropic/OpenAI API を叩く (サーバを経由しない) | プラットフォーム費用 0 のまま「ワンクリック解析」を実現するオプション。キーはサーバに送らない |
 
-- 日次 DQ サマリ: open issues を Haiku が分類 (「収集系の問題 / ソース側の問題 / 本物の市場イベント」) し、推奨対処を 1 行ずつ付ける
-- スパイク判定: DQ-03 フラグ行に対し、同時刻の他ソース値・events を突き合わせて「corroborated (裏付けあり)」/「suspect」をラベル → suspect のみ人間へ
+## 6. 将来の有料拡張 (V2+ でデータ量が正当化した場合のみ)
 
-## 6. 将来 (V3)
-
-- ニュース/SNS ストリームのイベント抽出 (構造化イベント→ events テーブル)
-- 「研究アシスタント」対話モード: Dossier を文脈に持つ Q&A (RAG: R2 の briefings/dossiers を検索)
+- `packs/` の出力をそのまま LLM API に流す optional module (`ai-autopilot`): daily_briefing の自動彩色、finding_review の全件一次スクリーニング。**入力契約が Pack で固定されているため、追加は 1 モジュールで済む**
+- Vectorize + embedding で過去 Dossier/Briefing の意味検索 (資料はすべて R2 に Markdown で揃っている)
+- 判断基準: 「手動ハンドオフの往復が週 5 回を超え、時間コストが金銭コストを上回ったら」(docs/09 §5 の有料化トリガー表)

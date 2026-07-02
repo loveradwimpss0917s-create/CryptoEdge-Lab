@@ -149,11 +149,11 @@ BoolExpr = {"and"|"or": [BoolExpr...]} | {"not": BoolExpr}
 FeatureRef = {"feature": "funding_z_90d"} | {"feature": "...", "lag": 1}
 ```
 
-- research (Python) と fetcher (TS) の**両方に同一セマンティクスの評価器**を実装し、共通のゴールデンテストベクトルで一致を保証する (docs/11 §4)。これにより「バックテストしたものと同じ定義」がリアルタイムでペーパー発火する
+- research (Python) と ingest Worker (TS) の**両方に同一セマンティクスの評価器**を実装し、共通のゴールデンテストベクトルで一致を保証する (docs/11 §4)。これにより「バックテストしたものと同じ定義」がリアルタイムでペーパー発火する
 - DSL で表現できない Edge (例: 執行内アルゴが本体のマイクロ構造系) は V1 では PAPER 以降に進めない (研究のみ)
 
 ## 10. ペーパートレード (PAPER/ACTIVE)
 
-- fetcher の 5 分 Cron がシグナル評価 → `paper_signals` に open/close 記録 (docs/02 §2.5)
+- ingest の 5 分 tick がシグナル評価 → `paper_signals` に open/close 記録 (docs/02 §2.5)
 - 約定価格: シグナル確定後の次バー始値 + 想定スリッページ。`trigger_snapshot` に入力値一式を保存 (「あのときなぜ発火したか」の完全再現)
 - 週次でペーパー vs バックテスト OOS の乖離レポート (Briefing 掲載)
