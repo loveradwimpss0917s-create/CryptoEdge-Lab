@@ -7,7 +7,7 @@ import { newId } from "@cryptoedge/shared";
 import type { Env } from "./env.js";
 import { enqueueIngestTask, touchIngestState, recordStreamError } from "./db.js";
 import { checkAndEscalate } from "./quality/consecutive-errors.js";
-import { streamsForTier, tierForCron, type Tier } from "./schedule.js";
+import { streamsForTier, tiersForTick, type Tier } from "./schedule.js";
 import { drainRetryQueue } from "./tasks.js";
 import { dispatchResearchEvent } from "./notify/github-dispatch.js";
 import { notifyTelegram } from "./notify/telegram.js";
@@ -48,8 +48,8 @@ async function runAdapters(env: Env, tier: Tier): Promise<{ ok: number; failed: 
 
 export default {
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    const tier = tierForCron(controller.cron);
-    ctx.waitUntil(handleTick(tier, env));
+    const tiers = tiersForTick(new Date(controller.scheduledTime));
+    ctx.waitUntil(handleTick(tiers, env));
   },
 
   // Manual trigger for local dev / smoke testing (`wrangler dev` -> curl /__tick?tier=5m).
@@ -57,7 +57,7 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/__tick") {
       const tier = (url.searchParams.get("tier") ?? "5m") as Tier;
-      const summary = await handleTick(tier, env);
+      const summary = await handleTick([tier], env);
       return new Response(JSON.stringify(summary), {
         headers: { "content-type": "application/json" }
       });
@@ -67,17 +67,26 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 async function handleTick(
-  tier: Tier,
+  tiers: Tier[],
   env: Env
-): Promise<{ tier: string; retried: { attempted: number; recovered: number }; ok: number; failed: number }> {
+): Promise<{ tiers: string[]; retried: { attempted: number; recovered: number }; ok: number; failed: number }> {
   const retried = await drainRetryQueue(env);
-  const { ok, failed } = await runAdapters(env, tier);
+
+  let ok = 0;
+  let failed = 0;
+  /* eslint-disable no-await-in-loop */
+  for (const tier of tiers) {
+    const result = await runAdapters(env, tier);
+    ok += result.ok;
+    failed += result.failed;
+  }
+  /* eslint-enable no-await-in-loop */
 
   if (failed > 0 && env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
     await notifyTelegram(
       env.TELEGRAM_BOT_TOKEN,
       env.TELEGRAM_CHAT_ID,
-      `⚠️ CryptoEdge ingest tier=${tier}: ${failed} adapter(s) failed, queued for retry.`
+      `⚠️ CryptoEdge ingest tiers=${tiers.join(",")}: ${failed} adapter(s) failed, queued for retry.`
     ).catch(() => {
       /* notification failures must never fail the tick */
     });
@@ -85,16 +94,16 @@ async function handleTick(
 
   // docs/01 §3.2: the Worker is the primary trigger for research-worker,
   // GitHub's own `schedule:` is only a backup.
-  if (tier === "1d" && env.GITHUB_PAT) {
+  if (tiers.includes("1d") && env.GITHUB_PAT) {
     await dispatchResearchEvent({ githubPat: env.GITHUB_PAT, repo: GITHUB_REPO }, "research-daily").catch(
       () => undefined
     );
   }
-  if (tier === "weekly" && env.GITHUB_PAT) {
+  if (tiers.includes("weekly") && env.GITHUB_PAT) {
     await dispatchResearchEvent({ githubPat: env.GITHUB_PAT, repo: GITHUB_REPO }, "research-weekly").catch(
       () => undefined
     );
   }
 
-  return { tier, retried, ok, failed };
+  return { tiers, retried, ok, failed };
 }

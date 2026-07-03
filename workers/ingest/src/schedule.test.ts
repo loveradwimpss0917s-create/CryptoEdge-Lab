@@ -1,16 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { STREAMS_1D, STREAMS_1H, STREAMS_5M, streamsForTier, tierForCron } from "./schedule.js";
+import { STREAMS_1D, STREAMS_1H, STREAMS_5M, streamsForTier, tiersForTick } from "./schedule.js";
 
-describe("tierForCron (docs/01 §4.6 cron -> tier map)", () => {
-  it("maps each configured cron expression to its tier", () => {
-    expect(tierForCron("*/5 * * * *")).toBe("5m");
-    expect(tierForCron("17 * * * *")).toBe("1h");
-    expect(tierForCron("23 1 * * *")).toBe("1d");
-    expect(tierForCron("0 3 * * sun")).toBe("weekly");
+describe("tiersForTick (docs/01 §4.6 wall-clock -> tier derivation)", () => {
+  it("always includes the 5m tier", () => {
+    expect(tiersForTick(new Date("2026-07-06T12:35:00Z"))).toEqual(["5m"]);
   });
 
-  it("throws on an unrecognized cron expression", () => {
-    expect(() => tierForCron("* * * * *")).toThrow();
+  it("adds the 1h tier at :15 each hour", () => {
+    expect(tiersForTick(new Date("2026-07-06T12:15:00Z"))).toEqual(["5m", "1h"]);
+  });
+
+  it("adds the 1d tier at 01:20 UTC", () => {
+    expect(tiersForTick(new Date("2026-07-06T01:20:00Z"))).toEqual(["5m", "1d"]);
+  });
+
+  it("adds the weekly tier at Sunday 03:00 UTC", () => {
+    // 2026-07-05 is a Sunday
+    expect(tiersForTick(new Date("2026-07-05T03:00:00Z"))).toEqual(["5m", "weekly"]);
   });
 });
 

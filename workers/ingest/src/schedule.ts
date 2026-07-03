@@ -27,7 +27,7 @@ export const STREAMS_5M: Adapter[] = [
   ...futuresInstruments.map(makeBinanceOpenInterestAdapter)
 ];
 
-// ---- tick-1h: "17 * * * *" ---------------------------------------------
+// ---- tick-1h: fires when the wall clock hits :15 each hour ---------------
 export const STREAMS_1H: Adapter[] = [
   deribitDvolAdapter
   // TODO (docs/03 §2.1, §2.2): 1h candle confirmation across venues,
@@ -37,7 +37,7 @@ export const STREAMS_1H: Adapter[] = [
   // needed beyond this array (docs/03 §7).
 ];
 
-// ---- tick-1d: "23 1 * * *" -----------------------------------------------
+// ---- tick-1d: fires at 01:20 UTC -----------------------------------------
 // Ordering matters here (docs/03 §4 G1 -> G2 -> G3); this Worker only owns
 // G1 (independent fetches). G2 (derived: SSR, Puell, ETF cumulative) and G3
 // (DQ digest + research dispatch) run in research-worker's daily-light job
@@ -51,7 +51,7 @@ export const STREAMS_1D: Adapter[] = [
   // CME-gap seed edge), econ_calendar (FOMC/CPI/NFP -> events table).
 ];
 
-// ---- tick-weekly: "0 3 * * sun" ---------------------------------------------
+// ---- tick-weekly: fires Sunday 03:00 UTC ---------------------------------
 export const STREAMS_WEEKLY: Adapter[] = [
   // TODO (docs/03 §2.5): cftc_cot (COT report), google_trends. This tick is
   // also where the ingest Worker triggers the `research-weekly`
@@ -61,17 +61,24 @@ export const STREAMS_WEEKLY: Adapter[] = [
 
 export type Tier = "5m" | "1h" | "1d" | "weekly";
 
-const CRON_TO_TIER: Record<string, Tier> = {
-  "*/5 * * * *": "5m",
-  "17 * * * *": "1h",
-  "23 1 * * *": "1d",
-  "0 3 * * sun": "weekly"
-};
+// The Cloudflare account this Worker shares with unrelated projects is
+// pinned at the Workers Free plan's 5-cron-trigger-per-account cap, and
+// those other projects already hold some of that budget. Rather than
+// register 4 more Cron Triggers here (and fail account-wide), this Worker
+// registers a single "*/5 * * * *" trigger and derives which tiers are due
+// from the wall clock on every 5-minute tick — the 5m tier always runs, and
+// the slower tiers piggyback on whichever 5-minute mark lands closest to
+// their old standalone schedule (docs/01 §4.6).
+export function tiersForTick(now: Date): Tier[] {
+  const minute = now.getUTCMinutes();
+  const hour = now.getUTCHours();
+  const day = now.getUTCDay(); // 0 = Sunday
 
-export function tierForCron(cron: string): Tier {
-  const tier = CRON_TO_TIER[cron];
-  if (!tier) throw new Error(`unrecognized cron expression: ${cron}`);
-  return tier;
+  const tiers: Tier[] = ["5m"];
+  if (minute === 15) tiers.push("1h");
+  if (hour === 1 && minute === 20) tiers.push("1d");
+  if (day === 0 && hour === 3 && minute === 0) tiers.push("weekly");
+  return tiers;
 }
 
 export function streamsForTier(tier: Tier): Adapter[] {

@@ -26,7 +26,7 @@
 | コンポーネント | 実体 | 責務 |
 |---|---|---|
 | `api` Worker | Workers Free + Hono + Static Assets | REST API、SPA 配信 (静的アセット配信は無料枠のリクエスト数に**カウントされない**)、Cache API によるレスポンスキャッシュ |
-| `ingest` Worker | Workers Free (Cron Triggers ≤ 4 本) | 収集の実行本体。Cron tick 内で「タスク表の消化 → 外部 fetch → 正規化 → D1/R2 書込み」まで完結 (**Queues は有料専用のため使わない**) |
+| `ingest` Worker | Workers Free (Cron Trigger 1 本 — アカウント全体 5 本上限を他プロジェクトと共有) | 収集の実行本体。Cron tick 内で「タスク表の消化 → 外部 fetch → 正規化 → D1/R2 書込み」まで完結 (**Queues は有料専用のため使わない**)。1h/1d/週次の粒度は壁時計判定 (schedule.ts `tiersForTick`) で内製 |
 | D1 `cryptoedge` | D1 Free (5GB, 読取 5M 行/日, 書込 100K 行/日) | メタデータ、集計時系列、Edge レジストリ、評価結果、**タスクキュー表** (Queues の代替)、最新値スナップ (KV の代替) |
 | KV `CONFIG` | KV Free (書込 1,000/日 — 制約強) | フィーチャーフラグ・少数の設定のみ。**高頻度書込みは一切置かない** |
 | R2 `cryptoedge-lake` | R2 Free (10GB, egress 無料) | データレイク (Parquet)、Run 成果物、Research Pack、バックアップ |
@@ -42,12 +42,13 @@
 ### 3.1 収集フロー (ingest Worker, Queues なし版)
 
 ```
-Cron Triggers (4 本 — Free 上限内)
-  ├─ "*/5 * * * *"  tick-5m  : ①D1 タスク表のリトライ消化 → ②当該 tick 担当ソースの fetch
-  │                             (1m 足は 5 分毎に直近 5 本まとめ取り — 1 分 Cron は不要)
-  ├─ "17 * * * *"   tick-1h  : 1h 足確定, funding 履歴, basis, オプションサマリ
-  ├─ "23 1 * * *"   tick-1d  : 日次系 G1→G2→G3 (docs/03 §4), 品質日報, latest 整合
-  └─ "0 3 * * sun"  tick-wk  : 週次系 (COT, Trends), Actions への weekly dispatch
+Cron Trigger 1 本 "*/5 * * * *" (アカウント全体で他プロジェクトと共有する
+Free 上限 5 本のうち 1 本のみ使用 — 残りの粒度は壁時計判定で内製)
+  ├─ 毎 tick          tick-5m  : ①D1 タスク表のリトライ消化 → ②当該 tick 担当ソースの fetch
+  │                              (1m 足は 5 分毎に直近 5 本まとめ取り — 1 分 Cron は不要)
+  ├─ 毎時 :15         tick-1h  : 1h 足確定, funding 履歴, basis, オプションサマリ
+  ├─ 01:20 UTC        tick-1d  : 日次系 G1→G2→G3 (docs/03 §4), 品質日報, latest 整合
+  └─ 日曜 03:00 UTC   tick-wk  : 週次系 (COT, Trends), Actions への weekly dispatch
 ```
 
 Queues の代替 = **D1 タスク表 `ingest_tasks`** (docs/02 §2.1):
@@ -98,7 +99,7 @@ SPA (api Worker の Static Assets — リクエスト無料)
 |---|---|
 | プラン | **Free** (リクエスト 100K/日・CPU 10ms/呼出し・サブリクエスト 50/呼出し) |
 | Worker 数 | 2 (`api`, `ingest`)。fetcher は ingest に統合 (Queues 廃止に伴い分離の意味がない) |
-| Cron | ingest に 4 本 (§3.1)。Free の Cron 上限内 |
+| Cron | ingest に 1 本 (§3.1)。アカウント全体の Free 上限 5 本を他プロジェクトと共有するため、1h/1d/週次は壁時計判定で内製 |
 | バインディング (api) | D1, KV `CONFIG`, R2, Static Assets。Secrets: `RESEARCH_API_TOKEN`, `GITHUB_PAT` (dispatch), `TELEGRAM_BOT_TOKEN` |
 | バインディング (ingest) | D1, KV, R2。Secrets: 外部 API キー (FRED, Etherscan 等の無料キー) |
 | 規約 | 1 呼出しで 10ms CPU を超えうる処理を書かない (レビュー観点として明文化)。バッチ UPSERT は 1 文で多行。ソート/集計は SQL に寄せる |

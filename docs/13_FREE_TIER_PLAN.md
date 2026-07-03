@@ -12,7 +12,7 @@
 | Workers リクエスト | 100,000/日 | Cron ~314 + API ~2,000 (単一ユーザ) + lake パススルー ~1,000 | ~3% | 静的アセット配信は無料枠にカウントされないため SPA は実質無制限 |
 | Workers CPU | 10ms/呼出し | fetch+parse+UPSERT で <5ms | — | 重い処理の全面禁止 (docs/01 §3 の規約)。gzip すら Actions へ |
 | サブリクエスト | 50/呼出し | 1 tick 最大 40 fetch | 80% | ソースを 5 分スロットに静的割付け。超過しそうならスロット分割 |
-| Cron Triggers | 少数 (Free) | 4 本 | — | 1m tier を廃止し 5m tick で 1m 足を 5 本まとめ取り |
+| Cron Triggers | 5 本/アカウント (Free、他プロジェクトと共有) | 1 本 | — | 1m tier を廃止し 5m tick で 1m 足を 5 本まとめ取り。1h/1d/週次は同一 tick 内の壁時計判定で内製 (schedule.ts `tiersForTick`) |
 | D1 ストレージ | 5 GB | 定常 ~1.2 GB (§2.1) | 24% | 保持期間の宣言的管理 + 週次アーカイブ |
 | D1 行読取り | 5,000,000/日 | UI+internal で <100K/日 | 2% | Actions は D1 でなく R2 Parquet を読む |
 | D1 行書込み | 100,000/日 | ~15K/日 (§2.2) | 15% | バッチ UPSERT。バックフィルは 80K/日でスロットリング |

@@ -7,14 +7,15 @@
   "observability": {
     "enabled": true
   },
-  // docs/01 §4.6: 4 Cron Triggers total, no Queues (Workers Free plan).
-  // tick-5m also absorbs what a 1m schedule would otherwise need (docs/01 §3.1).
+  // docs/01 §4.6: this account is shared with other, unrelated Workers that
+  // already consume part of the Workers Free plan's 5-cron-trigger-per-
+  // account cap, so registering 4 separate triggers here fails account-wide.
+  // Instead this Worker registers a single 5-minute trigger and derives the
+  // 1h/1d/weekly tiers from wall-clock time inside scheduled() (see
+  // schedule.ts tiersForTick).
   "triggers": {
     "crons": [
-      "*/5 * * * *",
-      "17 * * * *",
-      "23 1 * * *",
-      "0 3 * * sun"
+      "*/5 * * * *"
     ]
   },
   "d1_databases": [
