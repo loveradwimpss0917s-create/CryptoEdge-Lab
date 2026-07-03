@@ -1,7 +1,7 @@
 # 12. 保守・運用戦略
 
 ## 1. デプロイ
-- main ブランチ push → GitHub Actions `deploy.yml`: lint/test → `wrangler deploy` (api, ingest の 2 Worker) + web ビルド (api の static assets に同梱) + `wrangler d1 migrations apply`
+- main ブランチ push → GitHub Actions `deploy.yml`: **typecheck/test/lint (turbo, 失敗したらデプロイ中断)** → web ビルド → `wrangler d1 migrations apply` → `wrangler deploy` (api, ingest の 2 Worker) → **smoke test (`/api/v1/healthz` が200を返すまで最大5回リトライ、失敗ならワークフローを red にする)**
 - 環境: `production` のみ (単一ユーザ)。破壊的検証は `wrangler dev` + ローカル D1 で行う。research は git_sha 固定で再現可能なため staging 不要と判断
 - ロールバック: Workers は直前バージョンへ即時 rollback 可。D1 は前方マイグレーションのみなので、破壊的変更は「新テーブル追加 → 移行 → 旧テーブル放置」の expand パターンで行う
 
