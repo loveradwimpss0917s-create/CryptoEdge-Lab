@@ -43,6 +43,30 @@ def _r2_config() -> tuple[str, str]:
     return endpoint, bucket
 
 
+def _split_scheme(endpoint: str) -> tuple[str, str]:
+    """Splits an endpoint URL into (scheme, bare_host). Cloudflare's own
+    dashboard displays the R2 S3 API endpoint with an `https://` scheme
+    (and that's what boto3's `endpoint_url` expects too), but pyarrow's
+    `endpoint_override` wants a bare host — its own docstring's example is
+    `"localhost:9000"`, no scheme. Passing the scheme through unchanged
+    produces a mangled double-scheme host string that the AWS C++ SDK
+    rejects as "Invalid DNS Label found in URI host" (found while
+    diagnosing the first real lake-sync run against live R2)."""
+    scheme, sep, host = endpoint.partition("://")
+    if not sep:
+        return "https", endpoint
+    return scheme, host
+
+
+def _s3_filesystem(endpoint: str):
+    """Builds the S3FileSystem for R2 given an endpoint that may or may not
+    include a scheme (see `_split_scheme`)."""
+    import pyarrow.fs as pafs
+
+    scheme, host = _split_scheme(endpoint)
+    return pafs.S3FileSystem(endpoint_override=host, scheme=scheme)
+
+
 def read_candles(instrument_id: str, tf: str) -> pd.DataFrame:
     """Reads `curated/market/candles_{tf}/{instrument_id}/data.parquet`
     (docs/01 §4.3 R2 layout) and returns it sorted by `ts` ascending."""
@@ -54,10 +78,9 @@ def read_candles(instrument_id: str, tf: str) -> pd.DataFrame:
         # Production path: R2 via its S3-compatible API. Credentials/endpoint
         # come from standard AWS_* env vars (docs/13 §5); wired here but not
         # exercised by this sandbox's test suite, which has no R2 access.
-        import pyarrow.fs as pafs
 
         endpoint, bucket = _r2_config()
-        s3 = pafs.S3FileSystem(endpoint_override=endpoint)
+        s3 = _s3_filesystem(endpoint)
         key = f"{bucket}/curated/market/candles_{tf}/{instrument_id}/data.parquet"
         table = pq.read_table(key, filesystem=s3)
 
@@ -77,10 +100,9 @@ def write_parquet(key: str, df: pd.DataFrame) -> None:
         pq.write_table(table, path)
         return
 
-    import pyarrow.fs as pafs
 
     endpoint, bucket = _r2_config()
-    s3 = pafs.S3FileSystem(endpoint_override=endpoint)
+    s3 = _s3_filesystem(endpoint)
     pq.write_table(table, f"{bucket}/{key}", filesystem=s3)
 
 
@@ -98,7 +120,7 @@ def list_prefix(prefix: str) -> list[str]:
     import pyarrow.fs as pafs
 
     endpoint, bucket = _r2_config()
-    s3 = pafs.S3FileSystem(endpoint_override=endpoint)
+    s3 = _s3_filesystem(endpoint)
     selector = pafs.FileSelector(f"{bucket}/{prefix}", recursive=False, allow_not_found=True)
     infos = s3.get_file_info(selector)
     return sorted(info.path.removeprefix(f"{bucket}/") for info in infos)
@@ -128,7 +150,7 @@ def list_prefix_details(prefix: str, recursive: bool = False) -> list[dict[str, 
     import pyarrow.fs as pafs
 
     endpoint, bucket = _r2_config()
-    s3 = pafs.S3FileSystem(endpoint_override=endpoint)
+    s3 = _s3_filesystem(endpoint)
     selector = pafs.FileSelector(f"{bucket}/{prefix}", recursive=recursive, allow_not_found=True)
     infos = s3.get_file_info(selector)
     return [
@@ -148,10 +170,9 @@ def read_bytes(key: str) -> bytes:
     if local_root is not None:
         return (local_root / key).read_bytes()
 
-    import pyarrow.fs as pafs
 
     endpoint, bucket = _r2_config()
-    s3 = pafs.S3FileSystem(endpoint_override=endpoint)
+    s3 = _s3_filesystem(endpoint)
     with s3.open_input_file(f"{bucket}/{key}") as f:
         return f.read()
 
@@ -165,10 +186,9 @@ def write_bytes(key: str, data: bytes) -> None:
         path.write_bytes(data)
         return
 
-    import pyarrow.fs as pafs
 
     endpoint, bucket = _r2_config()
-    s3 = pafs.S3FileSystem(endpoint_override=endpoint)
+    s3 = _s3_filesystem(endpoint)
     with s3.open_output_stream(f"{bucket}/{key}") as f:
         f.write(data)
 
@@ -196,8 +216,7 @@ def delete_prefix(prefix: str) -> None:
             shutil.rmtree(base)
         return
 
-    import pyarrow.fs as pafs
 
     endpoint, bucket = _r2_config()
-    s3 = pafs.S3FileSystem(endpoint_override=endpoint)
+    s3 = _s3_filesystem(endpoint)
     s3.delete_dir(f"{bucket}/{prefix}")
