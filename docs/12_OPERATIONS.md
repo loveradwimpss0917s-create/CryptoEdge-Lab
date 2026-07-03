@@ -35,7 +35,7 @@
 | コスト全体 | **定常 ¥0/月** (Cloudflare Free + GitHub Free + Telegram 無料)。課金が発生したらそれ自体が異常 | 課金検知 = 即調査 |
 
 ## 3. バックアップ・復旧
-- D1: 週次 (weekly-heavy Actions) で全テーブルを R2 `backups/d1/{date}/` に Parquet エクスポート (8 世代ローリング) + D1 Time Travel (Free プランの保持日数は要確認 — 短い前提で週次エクスポートを一次手段とする)
+- D1: 週次 (weekly-heavy Actions, `jobs.backup`) で全テーブルを R2 `backups/d1/{date}/{table}.parquet` へエクスポート (8 世代ローリング、実装済み 2026-07 レビュー Task 7)。ページングは D1 の `rowid` によるキーセット方式 (`GET /internal/backup/tables` でテーブル一覧、`GET /internal/backup/dump?table=&after_rowid=` で1ページ取得)。世代の刈り込みは日付ディレクトリ単位、当日分は常に残す。D1 Time Travel (Free プランの保持日数は要確認 — 短い前提で週次エクスポートを一次手段とする) と併用
 - R2: バケットのバージョニング有効。raw/ は追記専用で実質不変
 - 復旧手順書 (runbook) を `docs/runbooks/restore.md` として実装フェーズで作成: (1) D1 再作成 → migrations → R2 バックアップから COPY (2) KV は再構築可能 (キャッシュのみ) (3) 市場データ穴は watermark リセット + リフィル
 - RPO: 市場データ = 0 (再取得可能) / 研究データ = 7 日 (週次) + Time Travel で実質 30 日以内任意点

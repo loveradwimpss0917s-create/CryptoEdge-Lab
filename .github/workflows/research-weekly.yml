@@ -33,5 +33,7 @@ jobs:
         with:
           version: "0.5.x"
       - run: uv sync
+      - name: Weekly D1 -> R2 Parquet backup (docs/12 §3, 8-generation rolling)
+        run: uv run python -m cryptoedge_research.jobs.backup
       - name: Drain queued on-demand jobs
         run: uv run python -m cryptoedge_research.jobs.on_demand

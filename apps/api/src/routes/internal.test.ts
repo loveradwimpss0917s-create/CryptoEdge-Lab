@@ -145,3 +145,47 @@ describe("GET /internal/jobs?status=queued (claim + stuck requeue)", () => {
     expect(row?.status).toBe("dispatched");
   });
 });
+
+describe("GET /internal/backup/dump (2026-07 review Task 7)", () => {
+  it("rejects a table name outside the whitelist", async () => {
+    const res = await internalRoute.request("/backup/dump?table=sqlite_master", {}, env);
+    expect(res.status).toBe(400);
+  });
+
+  it("pages through rows using after_rowid, oldest first", async () => {
+    // Seed migrations (0002) already populate `instruments`; start paging
+    // from whatever the table's current high-water mark is so this test
+    // doesn't depend on the exact seed row count.
+    const before = await env.DB.prepare(`SELECT MAX(rowid) AS m FROM instruments`).first<{ m: number }>();
+    const startRowid = before?.m ?? 0;
+
+    await env.DB.prepare(
+      `INSERT INTO instruments (instrument_id, symbol, venue, kind, base, quote, is_active) VALUES (?1, ?1, 'X', 'spot', 'A', 'B', 1)`
+    )
+      .bind("i1")
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO instruments (instrument_id, symbol, venue, kind, base, quote, is_active) VALUES (?1, ?1, 'X', 'spot', 'A', 'B', 1)`
+    )
+      .bind("i2")
+      .run();
+
+    const page1 = await internalRoute.request(
+      `/backup/dump?table=instruments&limit=1&after_rowid=${startRowid}`,
+      {},
+      env
+    );
+    const body1 = (await page1.json()) as { rows: { _rowid: number; instrument_id: string }[] };
+    expect(body1.rows).toHaveLength(1);
+    expect(body1.rows[0]!.instrument_id).toBe("i1");
+
+    const page2 = await internalRoute.request(
+      `/backup/dump?table=instruments&limit=1&after_rowid=${body1.rows[0]!._rowid}`,
+      {},
+      env
+    );
+    const body2 = (await page2.json()) as { rows: { instrument_id: string }[] };
+    expect(body2.rows).toHaveLength(1);
+    expect(body2.rows[0]!.instrument_id).toBe("i2");
+  });
+});

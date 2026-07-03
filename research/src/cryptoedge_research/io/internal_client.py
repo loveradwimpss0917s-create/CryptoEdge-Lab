@@ -139,6 +139,16 @@ class InternalApiClient:
         node (docs/05 §9) with real data instead of an always-empty series."""
         return self._get("/internal/events", params={"from": from_ts, "to": to_ts})["events"]
 
+    def get_backup_tables(self) -> list[str]:
+        """The whitelisted table names the weekly backup job dumps (docs/12 §3)."""
+        return self._get("/internal/backup/tables")["tables"]
+
+    def get_backup_dump_page(self, table: str, after_rowid: int, limit: int = 2000) -> list[dict[str, Any]]:
+        """One keyset-paginated page of `table`, ordered by rowid ascending."""
+        return self._get(
+            "/internal/backup/dump", params={"table": table, "after_rowid": after_rowid, "limit": limit}
+        )["rows"]
+
     def update_job_status(
         self, job_id: str, status: str, error: str | None = None, result_ref: str | None = None
     ) -> None:

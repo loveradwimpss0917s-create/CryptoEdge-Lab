@@ -74,6 +74,8 @@
 | POST `/internal/jobs/{id}/status` | running/done/failed 報告 |
 | GET `/internal/edge-versions/{id}` | signal_spec/params/cost_model 取得 (EEP 実行に必要) |
 | GET `/internal/edges/{id}/trial-count` | 当該 edge の累積 screen+full run 数 (DSR の n_trials 自動取得元、docs/05 §3.7) |
+| GET `/internal/backup/tables` | 週次バックアップ対象テーブルのホワイトリスト (docs/12 §3) |
+| GET `/internal/backup/dump?table=&after_rowid=&limit=` | 1テーブル分を rowid キーセットでページング取得 (バックアップジョブ専用) |
 | POST `/internal/runs` | eval_runs 開始登録 (run_id 採番) |
 | POST `/internal/runs/{id}/metrics` | eval_metrics バルク投入 (zod 検証) |
 | POST `/internal/runs/{id}/verdict` | verdict 投入 → 遷移提案を actions へ |

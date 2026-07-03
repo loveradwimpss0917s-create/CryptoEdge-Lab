@@ -18,6 +18,65 @@ import { audit } from "../services/audit.js";
 
 export const internalRoute = new Hono<{ Bindings: Env }>();
 
+// Tables backed up weekly (docs/12 §3, 2026-07 review Task 7). Whitelisted
+// explicitly rather than read from sqlite_master: the table name is
+// interpolated directly into SQL below since D1 can't bind an identifier,
+// so this list is also the injection guard.
+const BACKUP_TABLES = [
+  "instruments",
+  "data_sources",
+  "ingest_state",
+  "dq_issues",
+  "ingest_tasks",
+  "latest_snapshots",
+  "quota_usage",
+  "jobs",
+  "audit_log",
+  "settings",
+  "candles",
+  "funding_rates",
+  "open_interest",
+  "long_short_ratios",
+  "liquidations_5m",
+  "orderbook_snaps",
+  "options_surface",
+  "metric_defs",
+  "metrics",
+  "events",
+  "edges",
+  "edge_versions",
+  "edge_transitions",
+  "eval_runs",
+  "eval_metrics",
+  "verdicts",
+  "edge_correlations",
+  "regimes_daily",
+  "feature_defs",
+  "discovery_findings",
+  "paper_signals",
+  "ai_outputs"
+] as const;
+
+internalRoute.get("/backup/tables", (c) => c.json({ tables: BACKUP_TABLES }));
+
+// Keyset pagination on `rowid` rather than OFFSET: stable and cheap even
+// as tables grow, and immune to the "row shifted while paging" skew OFFSET
+// has if a write lands mid-dump.
+internalRoute.get("/backup/dump", async (c) => {
+  const table = c.req.query("table") ?? "";
+  if (!(BACKUP_TABLES as readonly string[]).includes(table)) {
+    return c.json({ type: "about:blank", title: `unknown backup table: ${table}`, status: 400 }, 400);
+  }
+  const afterRowid = Number(c.req.query("after_rowid") ?? "0");
+  const limit = Math.min(Number(c.req.query("limit") ?? "2000"), 5000);
+  const { results } = await c.env.DB.prepare(
+    `SELECT rowid AS _rowid, * FROM ${table} WHERE rowid > ?1 ORDER BY rowid ASC LIMIT ?2`
+  )
+    .bind(afterRowid, limit)
+    .all();
+  return c.json({ rows: results ?? [] });
+});
+
 // research-worker needs the signal_spec/params/cost_model to actually run
 // the EEP (docs/05 §3) — the write-only routes below don't give it a way
 // to read that back, so this is the one read route on /internal.
