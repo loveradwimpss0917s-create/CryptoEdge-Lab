@@ -60,11 +60,21 @@ def _split_scheme(endpoint: str) -> tuple[str, str]:
 
 def _s3_filesystem(endpoint: str):
     """Builds the S3FileSystem for R2 given an endpoint that may or may not
-    include a scheme (see `_split_scheme`)."""
+    include a scheme (see `_split_scheme`).
+
+    `region="auto"` is Cloudflare's documented recommendation for R2's
+    S3-compatible API (R2 has no real per-bucket region the way AWS S3
+    does). Leaving region unset made the AWS C++ SDK still try to
+    validate/derive a region-shaped hostname for multipart uploads
+    specifically — every read-ish call worked, but `CreateMultipartUpload`
+    (which is how pyarrow's Parquet writer always writes, regardless of
+    file size) failed with "Invalid DNS Label found in URI host" until
+    this was set explicitly (confirmed live against R2: stripping the
+    scheme in `_split_scheme` alone did not fix it)."""
     import pyarrow.fs as pafs
 
     scheme, host = _split_scheme(endpoint)
-    return pafs.S3FileSystem(endpoint_override=host, scheme=scheme)
+    return pafs.S3FileSystem(endpoint_override=host, scheme=scheme, region="auto")
 
 
 def read_candles(instrument_id: str, tf: str) -> pd.DataFrame:
