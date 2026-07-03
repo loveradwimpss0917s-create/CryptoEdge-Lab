@@ -86,10 +86,14 @@ function guardPaperToActive(ctx: GuardContext["PAPER_to_ACTIVE"]): GuardResult {
   if (ctx.paperDays < 30) return { ok: false, reason: `paper period ${ctx.paperDays}d < 30d` };
   if (ctx.signalCount < 10)
     return { ok: false, reason: `signal count ${ctx.signalCount} < 10` };
-  if (!(ctx.paperSharpe >= ctx.oosSharpeCi95Lo && ctx.paperSharpe <= ctx.oosSharpeCi95Hi))
+  // One-sided: paper trading merely needs to confirm the OOS estimate held
+  // up, not stay *below* its upper CI bound too — the original two-sided
+  // check rejected an edge for paper-trading better than backtested,
+  // which never indicates a real problem (2026-07 review finding H-4).
+  if (!(ctx.paperSharpe >= ctx.oosSharpeCi95Lo))
     return {
       ok: false,
-      reason: `paper sharpe ${ctx.paperSharpe} outside OOS 95% CI [${ctx.oosSharpeCi95Lo}, ${ctx.oosSharpeCi95Hi}]`
+      reason: `paper sharpe ${ctx.paperSharpe} below OOS 95% CI lower bound ${ctx.oosSharpeCi95Lo}`
     };
   if (ctx.avgSlippageBps > ctx.expectedCostBps)
     return {

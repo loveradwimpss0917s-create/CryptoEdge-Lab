@@ -65,7 +65,7 @@ describe("edge lifecycle guards (docs/05 §2)", () => {
     ).toBe(false);
     expect(
       canTransition("PAPER", "ACTIVE", {
-        PAPER_to_ACTIVE: { ...base, paperSharpe: 5 }
+        PAPER_to_ACTIVE: { ...base, paperSharpe: 0.1 }
       }).ok
     ).toBe(false);
     expect(
@@ -73,6 +73,19 @@ describe("edge lifecycle guards (docs/05 §2)", () => {
         PAPER_to_ACTIVE: { ...base, avgSlippageBps: 99 }
       }).ok
     ).toBe(false);
+  });
+
+  it("does not reject paper Sharpe above the OOS CI upper bound (one-sided gate, 2026-07 review H-4)", () => {
+    const base = {
+      paperDays: 31,
+      signalCount: 12,
+      paperSharpe: 5,
+      oosSharpeCi95Lo: 0.8,
+      oosSharpeCi95Hi: 1.5,
+      avgSlippageBps: 2,
+      expectedCostBps: 6
+    };
+    expect(canTransition("PAPER", "ACTIVE", { PAPER_to_ACTIVE: base }).ok).toBe(true);
   });
 
   it("rejects transitions outside the graph", () => {
