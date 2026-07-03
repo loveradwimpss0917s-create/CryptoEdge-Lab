@@ -38,7 +38,7 @@ async function runAdapters(env: Env, tier: Tier): Promise<{ ok: number; failed: 
         windowEnd: Date.now(),
         error: message
       });
-      await checkAndEscalate(env, adapter.streamId, consecutiveErrors);
+      await checkAndEscalate(env, adapter.streamId, consecutiveErrors, message);
       failed += 1;
     }
   }

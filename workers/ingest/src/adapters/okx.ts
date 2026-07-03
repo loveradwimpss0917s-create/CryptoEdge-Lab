@@ -24,7 +24,7 @@
 import { upsertCandles, upsertLatestSnapshot, upsertMetric } from "../db.js";
 import type { CandleRow } from "@cryptoedge/schema";
 import type { Adapter, AdapterRunResult } from "./types.js";
-import { fetchJson } from "./types.js";
+import { fetchJson, jitterDelay } from "./types.js";
 
 const OKX_BASE = "https://www.okx.com";
 
@@ -80,6 +80,7 @@ export function makeOkxCandlesAdapter(instrument: TrackedInstrument): Adapter {
     streamId,
     requestBudget: 1,
     async run(env): Promise<AdapterRunResult> {
+      await jitterDelay();
       const url = `${OKX_BASE}/api/v5/market/candles?instId=${instrument.okxInstId}&bar=1m&limit=6`;
       const raw = await fetchJson<{ data: OkxCandleRaw[] }>(url);
       const rows = parseOkxCandles(raw.data, instrument.instrumentId, instrument.isFutures);
@@ -120,6 +121,7 @@ export function makeOkxFundingRateAdapter(instrument: TrackedInstrument): Adapte
     streamId,
     requestBudget: 1,
     async run(env): Promise<AdapterRunResult> {
+      await jitterDelay();
       const url = `${OKX_BASE}/api/v5/public/funding-rate?instId=${instrument.okxInstId}`;
       const parsed = parseFundingRate(await fetchJson<OkxFundingRateResponse>(url));
       if (!parsed) return { streamId, rowsWritten: 0, watermarkTs: Date.now() };
@@ -164,6 +166,7 @@ export function makeOkxOpenInterestAdapter(instrument: TrackedInstrument): Adapt
     streamId,
     requestBudget: 1,
     async run(env): Promise<AdapterRunResult> {
+      await jitterDelay();
       const url = `${OKX_BASE}/api/v5/public/open-interest?instId=${instrument.okxInstId}`;
       const parsed = parseOpenInterest(await fetchJson<OkxOpenInterestResponse>(url));
       if (!parsed) return { streamId, rowsWritten: 0, watermarkTs: Date.now() };
