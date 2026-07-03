@@ -5,20 +5,9 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { EDGE_STATUSES, type EdgeStatus } from "@cryptoedge/schema";
+import { EDGE_STATUSES } from "@cryptoedge/schema";
 import { api, type EdgeSummary } from "../../api/client";
-
-const STATUS_LABEL: Record<EdgeStatus, string> = {
-  IDEA: "Idea",
-  CANDIDATE: "Candidate",
-  TESTING: "Testing",
-  VALIDATED: "Validated",
-  PAPER: "Paper",
-  ACTIVE: "Active",
-  DECAYING: "Decaying",
-  RETIRED: "Retired",
-  REJECTED: "Rejected"
-};
+import { STATUS_LABEL } from "../../lib/labels";
 
 function groupByStatus(edges: EdgeSummary[]): Record<string, EdgeSummary[]> {
   const groups: Record<string, EdgeSummary[]> = {};
@@ -39,9 +28,9 @@ export function EdgeBoardScreen() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Edge Board</h1>
-      {isLoading && <p className="text-slate-400">Loading…</p>}
-      {error && <p className="text-reject">Failed to load edges.</p>}
+      <h1 className="text-xl font-semibold">エッジボード</h1>
+      {isLoading && <p className="text-slate-400">読み込み中…</p>}
+      {error && <p className="text-reject">エッジの読み込みに失敗しました。</p>}
       {data && (
         <div className="flex gap-3 overflow-x-auto pb-4">
           {EDGE_STATUSES.map((status) => (
@@ -65,7 +54,7 @@ export function EdgeBoardScreen() {
                     </div>
                   </Link>
                 ))}
-                {groups[status]?.length === 0 && <div className="p-2 text-xs text-slate-600">Empty</div>}
+                {groups[status]?.length === 0 && <div className="p-2 text-xs text-slate-600">なし</div>}
               </div>
             </div>
           ))}

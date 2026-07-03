@@ -1,8 +1,8 @@
 import { Link, Outlet } from "@tanstack/react-router";
 
 const NAV = [
-  { to: "/" as const, label: "Today" },
-  { to: "/board" as const, label: "Board" }
+  { to: "/" as const, label: "今日" },
+  { to: "/board" as const, label: "ボード" }
 ];
 
 export function Layout() {

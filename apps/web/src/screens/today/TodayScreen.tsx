@@ -15,9 +15,9 @@ export function TodayScreen() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Today</h1>
-      {isLoading && <p className="text-slate-400">Loading market snapshot…</p>}
-      {error && <p className="text-reject">Failed to load market snapshot.</p>}
+      <h1 className="text-xl font-semibold">今日</h1>
+      {isLoading && <p className="text-slate-400">市場データを読み込み中…</p>}
+      {error && <p className="text-reject">市場データの読み込みに失敗しました。</p>}
       {data && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {Object.entries(data.snapshot).map(([key, point]) =>
@@ -31,7 +31,7 @@ export function TodayScreen() {
           )}
           {Object.keys(data.snapshot).length === 0 && (
             <p className="col-span-full text-slate-500">
-              No data yet — the ingest Worker hasn't run, or Cron hasn't fired locally.
+              まだデータがありません — ingest Worker が未実行か、Cron がまだ発火していません。
             </p>
           )}
         </div>
