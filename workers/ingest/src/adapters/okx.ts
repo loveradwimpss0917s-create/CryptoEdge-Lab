@@ -46,8 +46,15 @@ export type OkxCandleRaw = string[];
 
 export type CandleInsert = Omit<CandleRow, "ingested_at">;
 
-/** Reverses OKX's newest-first order and keeps only closed (confirm === "1") bars. */
-export function parseOkxCandles(raw: OkxCandleRaw[], instrumentId: string): CandleInsert[] {
+/**
+ * Reverses OKX's newest-first order and keeps only closed (confirm === "1")
+ * bars. Volume unit differs by instrument type (2026-07 review finding): for
+ * SPOT, `vol` (k[5]) is already base-currency volume; for SWAP, `vol` is a
+ * contract count, so `volCcy` (k[6], base-currency) is used instead —
+ * otherwise volume wouldn't be comparable across instruments for CVD/volume
+ * features.
+ */
+export function parseOkxCandles(raw: OkxCandleRaw[], instrumentId: string, isFutures: boolean): CandleInsert[] {
   return [...raw]
     .reverse()
     .filter((k) => k[8] === "1")
@@ -59,8 +66,8 @@ export function parseOkxCandles(raw: OkxCandleRaw[], instrumentId: string): Cand
       high: Number(k[2]),
       low: Number(k[3]),
       close: Number(k[4]),
-      volume: Number(k[5]),
-      quote_volume: Number(k[7]),
+      volume: isFutures ? Number(k[6]) : Number(k[5]),
+      quote_volume: isFutures ? Number(k[7]) : Number(k[6]),
       taker_buy_volume: null,
       trades: null
     }));
@@ -75,7 +82,7 @@ export function makeOkxCandlesAdapter(instrument: TrackedInstrument): Adapter {
     async run(env): Promise<AdapterRunResult> {
       const url = `${OKX_BASE}/api/v5/market/candles?instId=${instrument.okxInstId}&bar=1m&limit=6`;
       const raw = await fetchJson<{ data: OkxCandleRaw[] }>(url);
-      const rows = parseOkxCandles(raw.data, instrument.instrumentId);
+      const rows = parseOkxCandles(raw.data, instrument.instrumentId, instrument.isFutures);
       await upsertCandles(env, rows);
       const last = rows.at(-1);
       if (last) {
@@ -94,9 +101,16 @@ export interface OkxFundingRateResponse {
   data: { instId: string; fundingRate: string; fundingTime: string }[];
 }
 
-export function parseFundingRate(resp: OkxFundingRateResponse): { rate: number; ts: number } | null {
+/**
+ * `fundingTime` is OKX's *next* settlement time (a future timestamp), not
+ * when this rate was observed — storing it as the metric's `ts` was a PIT
+ * violation (2026-07 review finding: as-of joins would see a future value
+ * as if it were already known). The caller uses `Date.now()` as `ts` and
+ * keeps `fundingTime` only as `meta.next_funding_time` context.
+ */
+export function parseFundingRate(resp: OkxFundingRateResponse): { rate: number; nextFundingTime: number } | null {
   const entry = resp.data[0];
-  return entry ? { rate: Number(entry.fundingRate), ts: Number(entry.fundingTime) } : null;
+  return entry ? { rate: Number(entry.fundingRate), nextFundingTime: Number(entry.fundingTime) } : null;
 }
 
 export function makeOkxFundingRateAdapter(instrument: TrackedInstrument): Adapter {
@@ -109,24 +123,38 @@ export function makeOkxFundingRateAdapter(instrument: TrackedInstrument): Adapte
       const url = `${OKX_BASE}/api/v5/public/funding-rate?instId=${instrument.okxInstId}`;
       const parsed = parseFundingRate(await fetchJson<OkxFundingRateResponse>(url));
       if (!parsed) return { streamId, rowsWritten: 0, watermarkTs: Date.now() };
-      await upsertMetric(env, `deriv.predicted_funding.binance.${instrument.symbol}`, parsed.ts, parsed.rate, {});
+      const ts = Date.now();
+      await upsertMetric(
+        env,
+        `deriv.predicted_funding.binance.${instrument.symbol}`,
+        ts,
+        parsed.rate,
+        { next_funding_time: parsed.nextFundingTime },
+        { skipIfUnchanged: true }
+      );
       await upsertLatestSnapshot(env, `funding:binance:${instrument.symbol}`, {
         v: parsed.rate,
-        ts: parsed.ts,
-        ingested_at: Date.now()
+        ts,
+        ingested_at: ts
       });
-      return { streamId, rowsWritten: 1, watermarkTs: parsed.ts };
+      return { streamId, rowsWritten: 1, watermarkTs: ts };
     }
   };
 }
 
 export interface OkxOpenInterestResponse {
-  data: { instId: string; oi: string; ts: string }[];
+  data: { instId: string; oi: string; oiCcy: string; ts: string }[];
 }
 
+/**
+ * `oi` is a contract count (for BTC-USDT-SWAP, 1 contract = 0.01 BTC, so
+ * using it directly as a base-currency quantity was off by ~100x — 2026-07
+ * review finding). `oiCcy` is already denominated in the underlying asset,
+ * which is what `open_interest.oi_base` is documented to hold (docs/02).
+ */
 export function parseOpenInterest(resp: OkxOpenInterestResponse): { oiBase: number; ts: number } | null {
   const entry = resp.data[0];
-  return entry ? { oiBase: Number(entry.oi), ts: Number(entry.ts) } : null;
+  return entry ? { oiBase: Number(entry.oiCcy), ts: Number(entry.ts) } : null;
 }
 
 export function makeOkxOpenInterestAdapter(instrument: TrackedInstrument): Adapter {

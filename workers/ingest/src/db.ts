@@ -86,13 +86,36 @@ export async function upsertLatestSnapshot(
   await recordWrites(env, "d1_writes", 1);
 }
 
+export interface UpsertMetricOptions {
+  /**
+   * Skip the insert entirely if the most recent row for this metric_id has
+   * the same value (docs/13 §1 write budget — 2026-07 review finding: a
+   * slow-moving metric sampled every 5m otherwise grows the `metrics` table
+   * ~288 rows/day per instrument for no informational gain). Only safe for
+   * metrics where "value unchanged since last sample" is genuinely
+   * uninteresting to record — leave false (default) for anything where the
+   * *fact* of a repeated observation itself matters.
+   */
+  skipIfUnchanged?: boolean;
+}
+
 export async function upsertMetric(
   env: Env,
   metricId: string,
   ts: number,
   value: number,
-  meta?: unknown
+  meta?: unknown,
+  options?: UpsertMetricOptions
 ): Promise<void> {
+  if (options?.skipIfUnchanged) {
+    const last = await env.DB.prepare(
+      `SELECT value FROM metrics WHERE metric_id = ?1 ORDER BY ingested_at DESC LIMIT 1`
+    )
+      .bind(metricId)
+      .first<{ value: number }>();
+    if (last && last.value === value) return;
+  }
+
   const ingestedAt = Date.now();
   await env.DB.prepare(
     `INSERT INTO metrics (metric_id, ts, ingested_at, value, meta)
