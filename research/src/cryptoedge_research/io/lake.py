@@ -23,6 +23,26 @@ def _local_root() -> Path | None:
     return Path(value) if value else None
 
 
+def _r2_config() -> tuple[str, str]:
+    """Returns (endpoint, bucket) for the R2 branch, failing with a clear
+    message instead of pyarrow's "Path cannot start with a separator" —
+    which is what an empty bucket/endpoint produces (2026-07: a GitHub
+    Actions secret referenced in the workflow but never actually set
+    resolves to an empty string, not a missing key, so `os.environ[...]`
+    doesn't raise; this masked a plain "secrets not configured" mistake
+    as a confusing pyarrow internals error)."""
+    endpoint = os.environ.get("CRYPTOEDGE_R2_ENDPOINT")
+    bucket = os.environ.get("CRYPTOEDGE_R2_BUCKET")
+    if not endpoint or not bucket:
+        missing = [
+            name
+            for name, value in (("CRYPTOEDGE_R2_ENDPOINT", endpoint), ("CRYPTOEDGE_R2_BUCKET", bucket))
+            if not value
+        ]
+        raise RuntimeError(f"R2 not configured: missing/empty env var(s): {', '.join(missing)}")
+    return endpoint, bucket
+
+
 def read_candles(instrument_id: str, tf: str) -> pd.DataFrame:
     """Reads `curated/market/candles_{tf}/{instrument_id}/data.parquet`
     (docs/01 §4.3 R2 layout) and returns it sorted by `ts` ascending."""
@@ -36,8 +56,7 @@ def read_candles(instrument_id: str, tf: str) -> pd.DataFrame:
         # exercised by this sandbox's test suite, which has no R2 access.
         import pyarrow.fs as pafs
 
-        endpoint = os.environ["CRYPTOEDGE_R2_ENDPOINT"]
-        bucket = os.environ["CRYPTOEDGE_R2_BUCKET"]
+        endpoint, bucket = _r2_config()
         s3 = pafs.S3FileSystem(endpoint_override=endpoint)
         key = f"{bucket}/curated/market/candles_{tf}/{instrument_id}/data.parquet"
         table = pq.read_table(key, filesystem=s3)
@@ -60,8 +79,7 @@ def write_parquet(key: str, df: pd.DataFrame) -> None:
 
     import pyarrow.fs as pafs
 
-    endpoint = os.environ["CRYPTOEDGE_R2_ENDPOINT"]
-    bucket = os.environ["CRYPTOEDGE_R2_BUCKET"]
+    endpoint, bucket = _r2_config()
     s3 = pafs.S3FileSystem(endpoint_override=endpoint)
     pq.write_table(table, f"{bucket}/{key}", filesystem=s3)
 
@@ -79,8 +97,7 @@ def list_prefix(prefix: str) -> list[str]:
 
     import pyarrow.fs as pafs
 
-    endpoint = os.environ["CRYPTOEDGE_R2_ENDPOINT"]
-    bucket = os.environ["CRYPTOEDGE_R2_BUCKET"]
+    endpoint, bucket = _r2_config()
     s3 = pafs.S3FileSystem(endpoint_override=endpoint)
     selector = pafs.FileSelector(f"{bucket}/{prefix}", recursive=False, allow_not_found=True)
     infos = s3.get_file_info(selector)
@@ -110,8 +127,7 @@ def list_prefix_details(prefix: str, recursive: bool = False) -> list[dict[str, 
 
     import pyarrow.fs as pafs
 
-    endpoint = os.environ["CRYPTOEDGE_R2_ENDPOINT"]
-    bucket = os.environ["CRYPTOEDGE_R2_BUCKET"]
+    endpoint, bucket = _r2_config()
     s3 = pafs.S3FileSystem(endpoint_override=endpoint)
     selector = pafs.FileSelector(f"{bucket}/{prefix}", recursive=recursive, allow_not_found=True)
     infos = s3.get_file_info(selector)
@@ -134,8 +150,7 @@ def read_bytes(key: str) -> bytes:
 
     import pyarrow.fs as pafs
 
-    endpoint = os.environ["CRYPTOEDGE_R2_ENDPOINT"]
-    bucket = os.environ["CRYPTOEDGE_R2_BUCKET"]
+    endpoint, bucket = _r2_config()
     s3 = pafs.S3FileSystem(endpoint_override=endpoint)
     with s3.open_input_file(f"{bucket}/{key}") as f:
         return f.read()
@@ -152,8 +167,7 @@ def write_bytes(key: str, data: bytes) -> None:
 
     import pyarrow.fs as pafs
 
-    endpoint = os.environ["CRYPTOEDGE_R2_ENDPOINT"]
-    bucket = os.environ["CRYPTOEDGE_R2_BUCKET"]
+    endpoint, bucket = _r2_config()
     s3 = pafs.S3FileSystem(endpoint_override=endpoint)
     with s3.open_output_stream(f"{bucket}/{key}") as f:
         f.write(data)
@@ -184,7 +198,6 @@ def delete_prefix(prefix: str) -> None:
 
     import pyarrow.fs as pafs
 
-    endpoint = os.environ["CRYPTOEDGE_R2_ENDPOINT"]
-    bucket = os.environ["CRYPTOEDGE_R2_BUCKET"]
+    endpoint, bucket = _r2_config()
     s3 = pafs.S3FileSystem(endpoint_override=endpoint)
     s3.delete_dir(f"{bucket}/{prefix}")
