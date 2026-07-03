@@ -1,10 +1,11 @@
 // Edge resource routes (docs/08 "Edges / Versions / Runs").
 
 import { Hono } from "hono";
-import { newId } from "@cryptoedge/shared";
+import { dispatchResearchEvent, newId } from "@cryptoedge/shared";
 import {
   createEdgeRequestSchema,
   createEdgeVersionRequestSchema,
+  evalEdgeRequestSchema,
   listEdgesQuerySchema,
   transitionEdgeRequestSchema,
   type EdgeStatus
@@ -13,6 +14,10 @@ import type { Env } from "../env.js";
 import type { AccessVariables } from "../middleware/require-access.js";
 import { audit } from "../services/audit.js";
 import { attemptTransition } from "../services/edge-lifecycle.js";
+
+// Matches workers/ingest/src/index.ts's GITHUB_REPO — both Workers dispatch
+// to the same repo, just different event types.
+const GITHUB_REPO = "loveradwimpss0917s-create/CryptoEdge-Lab";
 
 export const edgesRoute = new Hono<{ Bindings: Env; Variables: AccessVariables }>();
 
@@ -159,6 +164,57 @@ async function fetchRecentRuns(env: Env, edgeVersionId: string) {
     })
   );
 }
+
+// Evaluation trigger (docs/08 POST /edges/{id}/eval): queues an eep job and
+// pokes research-worker via repository_dispatch. Without this, screen/full
+// runs never happen for a UI-driven Edge — the CANDIDATE->TESTING and
+// TESTING->VALIDATED guards (docs/05 §2) would have nothing to check
+// against (2026-07: closed this gap so the app is actually usable end to
+// end, not just for the 5 seeded Edges research-worker happens to be
+// pointed at manually).
+edgesRoute.post("/:id/eval", async (c) => {
+  const edgeId = c.req.param("id");
+  const body = evalEdgeRequestSchema.parse(await c.req.json());
+
+  const edge = await c.env.DB.prepare(`SELECT edge_id FROM edges WHERE edge_id = ?1`).bind(edgeId).first();
+  if (!edge) return c.json({ type: "about:blank", title: "edge not found", status: 404 }, 404);
+
+  const version = await c.env.DB.prepare(`SELECT version_id FROM edge_versions WHERE version_id = ?1 AND edge_id = ?2`)
+    .bind(body.version_id, edgeId)
+    .first();
+  if (!version) {
+    return c.json({ type: "about:blank", title: "edge_version not found for this edge", status: 404 }, 404);
+  }
+
+  const jobId = newId();
+  const payload = JSON.stringify({ edge_version_id: body.version_id, kind: body.kind });
+  await c.env.DB.prepare(
+    `INSERT INTO jobs (job_id, kind, payload, status, priority, created_at) VALUES (?1, 'eep', ?2, 'queued', 5, ?3)`
+  )
+    .bind(jobId, payload, Date.now())
+    .run();
+
+  const actor = `user:${c.get("userEmail")}`;
+  await audit(c.env, actor, "edge.eval_requested", `edge:${edgeId}`, {
+    versionId: body.version_id,
+    kind: body.kind,
+    jobId
+  });
+
+  // Worker dispatch is the primary trigger (docs/01 §3.2); if GITHUB_PAT
+  // isn't configured or GitHub's API hiccups, the job still sits in `jobs`
+  // as 'queued' and gets picked up by the next research-on-demand run
+  // (manual workflow_dispatch, or its weekly schedule safety net) — a
+  // dispatch failure here must never fail the request.
+  if (c.env.GITHUB_PAT) {
+    await dispatchResearchEvent({ githubPat: c.env.GITHUB_PAT, repo: GITHUB_REPO }, "research-on-demand", {
+      edge_version_id: body.version_id,
+      kind: body.kind
+    }).catch(() => undefined);
+  }
+
+  return c.json({ job_id: jobId, status: "queued" }, 202);
+});
 
 edgesRoute.post("/:id/versions", async (c) => {
   const edgeId = c.req.param("id");

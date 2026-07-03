@@ -47,6 +47,15 @@ export const transitionEdgeRequestSchema = z.object({
 });
 export type TransitionEdgeRequest = z.infer<typeof transitionEdgeRequestSchema>;
 
+// docs/08 POST /edges/{id}/eval. `kind=screen` is the cheap CANDIDATE->TESTING
+// gate check (docs/05 §2); `kind=full` is the complete EEP run TESTING->VALIDATED
+// needs.
+export const evalEdgeRequestSchema = z.object({
+  version_id: z.string().min(1),
+  kind: z.enum(["screen", "full"])
+});
+export type EvalEdgeRequest = z.infer<typeof evalEdgeRequestSchema>;
+
 export const listEdgesQuerySchema = z.object({
   status: z.enum(EDGE_STATUSES).optional(),
   category: z.enum(EDGE_CATEGORIES).optional(),

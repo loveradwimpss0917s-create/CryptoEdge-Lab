@@ -83,3 +83,43 @@ describe("GET /edges/:id runs (2026-07 review Task 8)", () => {
     expect(runWithoutVerdict.metrics).toEqual({ ev_bps: null, sharpe: null, dsr: null, p_perm: null });
   });
 });
+
+describe("POST /edges/:id/eval (evaluation trigger)", () => {
+  it("returns 404 for an unknown edge", async () => {
+    const res = await edgesRoute.request(
+      "/nope/eval",
+      { method: "POST", body: JSON.stringify({ version_id: "v1", kind: "screen" }) },
+      env
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 404 when version_id doesn't belong to this edge", async () => {
+    await seedEdgeWithVersion(env);
+    const res = await edgesRoute.request(
+      "/e1/eval",
+      { method: "POST", body: JSON.stringify({ version_id: "not-v1", kind: "screen" }) },
+      env
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("queues a job and skips the GitHub dispatch when GITHUB_PAT isn't configured", async () => {
+    await seedEdgeWithVersion(env);
+    const res = await edgesRoute.request(
+      "/e1/eval",
+      { method: "POST", body: JSON.stringify({ version_id: "v1", kind: "screen" }) },
+      env
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { job_id: string; status: string };
+    expect(body.status).toBe("queued");
+
+    const row = await env.DB.prepare(`SELECT kind, status, payload FROM jobs WHERE job_id = ?1`)
+      .bind(body.job_id)
+      .first<{ kind: string; status: string; payload: string }>();
+    expect(row?.kind).toBe("eep");
+    expect(row?.status).toBe("queued");
+    expect(JSON.parse(row!.payload)).toEqual({ edge_version_id: "v1", kind: "screen" });
+  });
+});

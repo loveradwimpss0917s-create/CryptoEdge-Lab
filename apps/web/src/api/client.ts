@@ -105,6 +105,11 @@ export const api = {
       `/edges/${edgeId}/transitions`,
       { method: "POST", body: JSON.stringify({ to_status, reason }) }
     ),
+  evalEdge: (edgeId: string, version_id: string, kind: "screen" | "full") =>
+    request<{ job_id: string; status: string }>(`/edges/${edgeId}/eval`, {
+      method: "POST",
+      body: JSON.stringify({ version_id, kind })
+    }),
   marketOverview: () => request<MarketSnapshot>("/market/overview"),
   quotaOverview: () => request<QuotaOverview>("/ops/quota")
 };

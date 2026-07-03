@@ -9,8 +9,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from cryptoedge_research.eval.pipeline import EepConfig
-from cryptoedge_research.jobs.on_demand import _bucket_events, _referenced_features, run_eep_for_edge_version
+from cryptoedge_research.eval.pipeline import EepConfig, EepResult, MetricRow
+from cryptoedge_research.eval.verdict import VerdictOutcome
+from cryptoedge_research.jobs.on_demand import (
+    _bucket_events,
+    _referenced_features,
+    _submit_result,
+    run_eep_for_edge_version,
+)
 
 BAR_MS = 3_600_000
 
@@ -133,3 +139,41 @@ def test_short_direction_is_wired_through_edge_version():
     result = run_eep_for_edge_version(edge_version, price_df, BAR_MS, n_trials=1)
     trade_metric = next(m for m in result.metrics if m.segment == "overall" and m.metric == "trades")
     assert trade_metric.value == 1
+
+
+class _FakeInternalApiClient:
+    """Captures the StartRunRequest _submit_result builds, without a real
+    /internal connection — this is the run_kind pass-through regression
+    guard (2026-07: run_kind was hardcoded to "full" regardless of what
+    POST /edges/{id}/eval's payload asked for, so a screen-run request
+    never satisfied the CANDIDATE->TESTING guard, which specifically
+    checks for a run_kind='screen' row)."""
+
+    def __init__(self):
+        self.start_run_calls: list[object] = []
+
+    def start_run(self, req):
+        self.start_run_calls.append(req)
+        return "run-1"
+
+    def submit_metrics(self, run_id, metrics):
+        return len(metrics)
+
+    def submit_verdict(self, run_id, req):
+        return req.verdict
+
+
+def _empty_eep_result() -> EepResult:
+    return EepResult(metrics=[MetricRow("overall", "trades", 0)], verdict=VerdictOutcome("REJECT", []))
+
+
+def test_submit_result_passes_through_the_requested_run_kind():
+    client = _FakeInternalApiClient()
+    _submit_result(client, "v1", "hash", "snap-1", _empty_eep_result(), "sha", run_kind="screen")
+    assert client.start_run_calls[0].run_kind == "screen"
+
+
+def test_submit_result_defaults_run_kind_to_full():
+    client = _FakeInternalApiClient()
+    _submit_result(client, "v1", "hash", "snap-1", _empty_eep_result(), "sha")
+    assert client.start_run_calls[0].run_kind == "full"

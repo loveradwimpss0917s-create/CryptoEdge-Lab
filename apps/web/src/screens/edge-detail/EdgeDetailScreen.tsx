@@ -77,6 +77,20 @@ export function EdgeDetailScreen() {
     }
   });
 
+  // 評価トリガー (2026-07): これが無いと Edge は IDEA/CANDIDATE のまま
+  // 先に進めない — screen/full run が一度も走らないため、状態遷移ガード
+  // (docs/05 §2) を満たす eval_runs/verdicts が永遠に生まれない。
+  const evalTrigger = useMutation({
+    mutationFn: (kind: "screen" | "full") => {
+      const versionId = (data?.current_version as { version_id?: string } | null)?.version_id;
+      if (!versionId) throw new Error("現在のバージョンがありません");
+      return api.evalEdge(edgeId, versionId, kind);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["edge", edgeId] });
+    }
+  });
+
   if (isLoading) return <p className="text-slate-400">読み込み中…</p>;
   if (error || !data) return <p className="text-reject">エッジの読み込みに失敗しました。</p>;
 
@@ -142,11 +156,37 @@ export function EdgeDetailScreen() {
       </section>
 
       {data.current_version && (
-        <section className="rounded border border-slate-800 bg-slate-900 p-4">
+        <section className="space-y-3 rounded border border-slate-800 bg-slate-900 p-4">
           <h2 className="text-sm font-medium text-slate-400">現在のバージョン</h2>
-          <pre className="mt-1 overflow-x-auto text-xs text-slate-300">
+          <pre className="overflow-x-auto text-xs text-slate-300">
             {JSON.stringify(data.current_version, null, 2)}
           </pre>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => evalTrigger.mutate("screen")}
+              disabled={evalTrigger.isPending}
+              className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-sm hover:bg-slate-700 disabled:opacity-50"
+            >
+              スクリーン評価を実行
+            </button>
+            <button
+              onClick={() => evalTrigger.mutate("full")}
+              disabled={evalTrigger.isPending}
+              className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-sm hover:bg-slate-700 disabled:opacity-50"
+            >
+              フル評価を実行
+            </button>
+          </div>
+          {evalTrigger.isSuccess && (
+            <p className="text-sm text-adopt">
+              評価を投入しました (job_id: {evalTrigger.data.job_id})。数分後に評価履歴に反映されます。
+            </p>
+          )}
+          {evalTrigger.isError && (
+            <p className="text-sm text-reject">
+              {evalTrigger.error instanceof Error ? evalTrigger.error.message : "評価の投入に失敗しました"}
+            </p>
+          )}
         </section>
       )}
 

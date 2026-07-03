@@ -163,12 +163,13 @@ def _submit_result(
     snapshot_id: str,
     result: EepResult,
     git_sha: str,
+    run_kind: str = "full",
 ) -> str:
     run_id = client.start_run(
         StartRunRequest(
             edge_version_id=edge_version_id,
             protocol_version=PROTOCOL_VERSION,
-            run_kind="full",
+            run_kind=run_kind,
             dataset_hash=dataset_hash,
             snapshot_id=snapshot_id,
             seed=0,
@@ -212,6 +213,12 @@ def main() -> int:
         job = jobs[0]
         payload = json.loads(job["payload"]) if isinstance(job["payload"], str) else job["payload"]
         edge_version_id = payload["edge_version_id"]
+        # docs/08 POST /edges/{id}/eval's `kind` (screen/full) — this used to
+        # be hardcoded to "full" regardless of what was requested, so a
+        # screen-run request never satisfied the CANDIDATE->TESTING guard
+        # (docs/05 §2), which specifically checks for a `run_kind='screen'`
+        # row (2026-07: found while wiring up the eval-trigger endpoint).
+        run_kind = payload.get("kind", "full")
 
         edge_version = client.get_edge_version(edge_version_id)
         # docs/05 §3.7: n_trials is the cumulative screen+full run count
@@ -242,7 +249,9 @@ def main() -> int:
             # writes it weekly). "unknown" only if lake_sync hasn't run yet
             # (2026-07 review, Task 4).
             dataset_hash = read_dataset_hash()
-            run_id = _submit_result(client, edge_version_id, dataset_hash, snapshot_id, result, git_sha)
+            run_id = _submit_result(
+                client, edge_version_id, dataset_hash, snapshot_id, result, git_sha, run_kind=run_kind
+            )
             client.update_job_status(job["job_id"], "done", result_ref=run_id)
             logger.info("run %s completed: %s", run_id, result.verdict.verdict)
         except Exception as exc:  # noqa: BLE001 - top-level job failure must be recorded, not crash the Action

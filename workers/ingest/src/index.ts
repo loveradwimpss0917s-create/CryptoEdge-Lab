@@ -3,14 +3,13 @@
 // directly — no Queues (Workers Free plan doesn't have them). Failures are
 // caught per-adapter so one bad source never blocks the rest of the tick.
 
-import { newId } from "@cryptoedge/shared";
+import { dispatchResearchEvent, newId } from "@cryptoedge/shared";
 import type { Env } from "./env.js";
 import { enqueueIngestTask, touchIngestState, recordStreamError } from "./db.js";
 import { checkAndEscalate } from "./quality/consecutive-errors.js";
 import { checkQuotaThresholds } from "./quality/quota-alert.js";
 import { streamsForTier, tiersForTick, type Tier } from "./schedule.js";
 import { drainRetryQueue } from "./tasks.js";
-import { dispatchResearchEvent } from "./notify/github-dispatch.js";
 import { notifyTelegram } from "./notify/telegram.js";
 
 const GITHUB_REPO = "loveradwimpss0917s-create/CryptoEdge-Lab";
