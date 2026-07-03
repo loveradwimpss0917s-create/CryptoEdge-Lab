@@ -129,6 +129,11 @@ class InternalApiClient:
     def get_edge_version(self, version_id: str) -> dict[str, Any]:
         return self._get(f"/internal/edge-versions/{version_id}")["edge_version"]
 
+    def get_trial_count(self, edge_id: str) -> int:
+        """Cumulative screen+full eval_runs against this edge *before* the
+        run about to be started (docs/05 §3.7 n_trials = this count + 1)."""
+        return self._get(f"/internal/edges/{edge_id}/trial-count")["trial_count"]
+
     def update_job_status(
         self, job_id: str, status: str, error: str | None = None, result_ref: str | None = None
     ) -> None:

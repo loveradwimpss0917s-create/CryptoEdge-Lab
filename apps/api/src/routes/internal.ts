@@ -30,6 +30,22 @@ internalRoute.get("/edge-versions/:id", async (c) => {
   return c.json({ edge_version: version });
 });
 
+// docs/05 §3.7 DSR needs "cumulative screen+full run count against the
+// edge" as n_trials; research-worker can't compute that itself (it never
+// touches D1 directly), so it fetches this before running the EEP when the
+// dispatch payload didn't pin an explicit n_trials (2026-07 review, Task 5).
+internalRoute.get("/edges/:id/trial-count", async (c) => {
+  const edgeId = c.req.param("id");
+  const row = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM eval_runs r
+     JOIN edge_versions v ON v.version_id = r.edge_version_id
+     WHERE v.edge_id = ?1 AND r.run_kind IN ('screen', 'full')`
+  )
+    .bind(edgeId)
+    .first<{ n: number }>();
+  return c.json({ edge_id: edgeId, trial_count: row?.n ?? 0 });
+});
+
 internalRoute.get("/jobs", async (c) => {
   const status = c.req.query("status") ?? "queued";
   const limit = Number(c.req.query("limit") ?? "5");

@@ -160,9 +160,17 @@ def main() -> int:
         job = jobs[0]
         payload = json.loads(job["payload"]) if isinstance(job["payload"], str) else job["payload"]
         edge_version_id = payload["edge_version_id"]
-        n_trials = payload.get("n_trials", 1)
 
         edge_version = client.get_edge_version(edge_version_id)
+        # docs/05 §3.7: n_trials is the cumulative screen+full run count
+        # against the edge, *including this run* — dispatch payloads only
+        # pin an explicit n_trials for tests; production dispatch (docs/08
+        # `/edges/{id}/eval`) doesn't know that count, so it's fetched here
+        # (2026-07 review, Task 5).
+        n_trials = payload.get("n_trials")
+        if n_trials is None:
+            n_trials = client.get_trial_count(edge_version["edge_id"]) + 1
+
         instrument_id = edge_version["instrument_id"]
         price_df = read_candles(instrument_id, "1h")
         bar_interval_ms = 3_600_000
