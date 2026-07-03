@@ -1,13 +1,64 @@
-// SCR-03 Edge Dossier (docs/06 §3). V1 slice: the Thesis tab only —
-// Evidence/Runs/Paper/Versions/Related tabs need eval_metrics, verdicts,
-// and paper_signals data that only exists once EEP runs have executed
-// against seeded Edges (docs/09 P0 "全 tier の収集が7日間無人で稼働").
+// SCR-03 Edge Dossier (docs/06 §3). V1 slice: Thesis + a flat 評価履歴
+// (run/verdict/wf:oos指標) section, not the full tabbed Evidence/Runs/
+// Paper/Versions/Related layout — Paper/Versions/Related still need
+// paper_signals data that only exists once EEP runs have executed against
+// seeded Edges (docs/09 P0 "全 tier の収集が7日間無人で稼働"). 評価履歴は
+// 2026-07 レビュー Task 8 で追加。
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { EDGE_TRANSITION_GRAPH, type EdgeStatus } from "@cryptoedge/schema";
-import { api } from "../../api/client";
-import { STATUS_LABEL } from "../../lib/labels";
+import { api, type RunSummary } from "../../api/client";
+import { formatUtcTimestamp } from "../../lib/format";
+import { STATUS_LABEL, VERDICT_CHECK_LABEL, VERDICT_LABEL } from "../../lib/labels";
+
+const VERDICT_BADGE_CLASS: Record<"ADOPT" | "WATCH" | "REJECT", string> = {
+  ADOPT: "bg-adopt text-slate-950",
+  WATCH: "bg-watch text-slate-950",
+  REJECT: "bg-reject text-slate-950"
+};
+
+function RunHistoryEntry({ run }: { run: RunSummary }) {
+  const metricEntries: [string, number | null][] = [
+    ["EV", run.metrics.ev_bps],
+    ["Sharpe", run.metrics.sharpe],
+    ["DSR", run.metrics.dsr],
+    ["p_perm", run.metrics.p_perm]
+  ];
+
+  return (
+    <div className="space-y-2 border-t border-slate-800 pt-3 first:border-t-0 first:pt-0">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        {run.verdict ? (
+          <span className={`rounded px-2 py-0.5 font-medium ${VERDICT_BADGE_CLASS[run.verdict.verdict]}`}>
+            {VERDICT_LABEL[run.verdict.verdict]}
+          </span>
+        ) : (
+          <span className="rounded bg-slate-800 px-2 py-0.5 font-medium text-slate-400">未評価</span>
+        )}
+        <span className="text-slate-500">{run.run_kind}</span>
+        <span className="text-slate-600">{run.finished_at ? formatUtcTimestamp(run.finished_at) : run.status}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-xs text-slate-400 sm:grid-cols-4">
+        {metricEntries.map(([label, value]) => (
+          <div key={label}>
+            {label}: {value ?? "—"}
+          </div>
+        ))}
+      </div>
+      {run.verdict && run.verdict.reasons.length > 0 && (
+        <ul className="space-y-1 text-xs">
+          {run.verdict.reasons.map((reason) => (
+            <li key={reason.check} className="flex items-start gap-1.5">
+              <span className={reason.passed ? "text-adopt" : "text-reject"}>{reason.passed ? "✓" : "✗"}</span>
+              <span className="text-slate-300">{VERDICT_CHECK_LABEL[reason.check] ?? reason.check}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 export function EdgeDetailScreen() {
   const { edgeId } = useParams({ from: "/edges/$edgeId" });
@@ -96,6 +147,15 @@ export function EdgeDetailScreen() {
           <pre className="mt-1 overflow-x-auto text-xs text-slate-300">
             {JSON.stringify(data.current_version, null, 2)}
           </pre>
+        </section>
+      )}
+
+      {data.runs.length > 0 && (
+        <section className="space-y-3 rounded border border-slate-800 bg-slate-900 p-4">
+          <h2 className="text-sm font-medium text-slate-400">評価履歴 (直近{data.runs.length}件)</h2>
+          {data.runs.map((run) => (
+            <RunHistoryEntry key={run.run_id} run={run} />
+          ))}
         </section>
       )}
 

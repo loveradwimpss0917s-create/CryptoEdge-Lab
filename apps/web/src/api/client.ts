@@ -48,6 +48,23 @@ export interface EdgeSummary {
   updated_at: number;
 }
 
+export interface VerdictReason {
+  check: string;
+  passed: boolean;
+  value: number | null;
+  threshold: number | null;
+}
+
+export interface RunSummary {
+  run_id: string;
+  run_kind: string;
+  status: string;
+  started_at: number | null;
+  finished_at: number | null;
+  verdict: { verdict: "ADOPT" | "WATCH" | "REJECT"; reasons: VerdictReason[]; decided_at: number } | null;
+  metrics: { ev_bps: number | null; sharpe: number | null; dsr: number | null; p_perm: number | null };
+}
+
 export interface EdgeDetail {
   edge: EdgeSummary & {
     hypothesis: string;
@@ -57,6 +74,7 @@ export interface EdgeDetail {
   };
   current_version: Record<string, unknown> | null;
   latest_verdict: Record<string, unknown> | null;
+  runs: RunSummary[];
 }
 
 export interface MarketSnapshot {

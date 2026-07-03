@@ -97,8 +97,68 @@ edgesRoute.get("/:id", async (c) => {
         .first()
     : null;
 
-  return c.json({ edge, current_version: version ?? null, latest_verdict: latestVerdict ?? null });
+  const runs = version ? await fetchRecentRuns(c.env, version["version_id"] as string) : [];
+
+  return c.json({ edge, current_version: version ?? null, latest_verdict: latestVerdict ?? null, runs });
 });
+
+// 評価履歴 (2026-07 レビュー Task 8): Edge Dossier に直近の run/verdict/主要
+// OOS 指標をまとめて返す。1 run あたり verdict + metrics の2クエリだが、
+// 直近5件までなので D1 の読み込み予算 (5M/日, docs/13 §1) に対して無視できる。
+interface RunSummaryRow {
+  run_id: string;
+  run_kind: string;
+  status: string;
+  started_at: number | null;
+  finished_at: number | null;
+}
+
+async function fetchRecentRuns(env: Env, edgeVersionId: string) {
+  const { results } = await env.DB.prepare(
+    `SELECT run_id, run_kind, status, started_at, finished_at FROM eval_runs
+     WHERE edge_version_id = ?1 ORDER BY COALESCE(finished_at, started_at, 0) DESC LIMIT 5`
+  )
+    .bind(edgeVersionId)
+    .all<RunSummaryRow>();
+
+  return Promise.all(
+    (results ?? []).map(async (run) => {
+      const [verdictRow, metricRows] = await Promise.all([
+        env.DB.prepare(`SELECT verdict, reasons, decided_at FROM verdicts WHERE run_id = ?1`)
+          .bind(run.run_id)
+          .first<{ verdict: string; reasons: string; decided_at: number }>(),
+        env.DB.prepare(
+          `SELECT metric, value FROM eval_metrics
+           WHERE run_id = ?1 AND segment = 'wf:oos' AND metric IN ('ev_bps', 'sharpe', 'dsr', 'p_perm')`
+        )
+          .bind(run.run_id)
+          .all<{ metric: string; value: number }>()
+      ]);
+      const metricsByName = new Map((metricRows.results ?? []).map((m) => [m.metric, m.value]));
+
+      return {
+        run_id: run.run_id,
+        run_kind: run.run_kind,
+        status: run.status,
+        started_at: run.started_at,
+        finished_at: run.finished_at,
+        verdict: verdictRow
+          ? {
+              verdict: verdictRow.verdict,
+              reasons: JSON.parse(verdictRow.reasons) as unknown[],
+              decided_at: verdictRow.decided_at
+            }
+          : null,
+        metrics: {
+          ev_bps: metricsByName.get("ev_bps") ?? null,
+          sharpe: metricsByName.get("sharpe") ?? null,
+          dsr: metricsByName.get("dsr") ?? null,
+          p_perm: metricsByName.get("p_perm") ?? null
+        }
+      };
+    })
+  );
+}
 
 edgesRoute.post("/:id/versions", async (c) => {
   const edgeId = c.req.param("id");

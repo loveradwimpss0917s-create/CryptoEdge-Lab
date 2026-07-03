@@ -23,3 +23,27 @@ export const QUOTA_RESOURCE_LABEL: Record<string, string> = {
   worker_requests: "Worker リクエスト (回/日)",
   kv_writes: "KV 書き込み (回/日)"
 };
+
+export const VERDICT_LABEL: Record<"ADOPT" | "WATCH" | "REJECT", string> = {
+  ADOPT: "採用",
+  WATCH: "様子見",
+  REJECT: "却下"
+};
+
+// verdict.py の VerdictReason.check 名 (docs/05 §5) と1対1対応。未知の
+// check は id をそのまま表示する (プロトコル改訂で項目が増減し得るため)。
+export const VERDICT_CHECK_LABEL: Record<string, string> = {
+  "reject.ci_upper_below_zero": "EV信頼区間の上限が0超え (却下回避)",
+  "reject.p_perm_too_high": "p_perm が却下閾値未満 (却下回避)",
+  "reject.dsr_too_low": "DSR が却下閾値超え (却下回避)",
+  "reject.recent_2y_ev_negative": "直近2年のEVが非負 (却下回避)",
+  "adopt.ci_lower_above_zero": "EV信頼区間の下限 > 0",
+  "adopt.sharpe": "Sharpe が最低基準以上",
+  "adopt.dsr": "DSR (試行数調整後) が採用基準以上",
+  "adopt.p_perm": "p_perm が採用基準未満",
+  "adopt.n_eff": "実効サンプル数 n_eff が最低基準以上",
+  "adopt.fold_consistency": "fold間のEV符号一貫性",
+  "adopt.regime_worst_ev": "最悪レジームでのEVが許容範囲内",
+  "adopt.top5_concentration": "上位5トレードへの利益集中度が許容範囲内",
+  "adopt.corr_max_active": "運用中Edgeとの相関が許容範囲内"
+};
