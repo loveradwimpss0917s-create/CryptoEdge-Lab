@@ -85,8 +85,12 @@ export const regimeUpdateInputSchema = z.object({
   trend: z.enum(["up", "down", "range"]),
   vol: z.enum(["low", "high", "extreme"]),
   liquidity: z.enum(["normal", "stressed"]),
-  hmm_state: z.number().int().optional(),
-  probs: z.array(z.number()).optional(),
+  // .nullable(): the Python client (Pydantic) always serializes an unset
+  // Optional[...] field as an explicit `null`, not an omitted key — plain
+  // .optional() rejects that (2026-07: found live, first R2 regime backfill
+  // failed HTTP 400 "Expected number, received null").
+  hmm_state: z.number().int().nullable().optional(),
+  probs: z.array(z.number()).nullable().optional(),
   model_version: z.string().min(1)
 });
 export type RegimeUpdateInput = z.infer<typeof regimeUpdateInputSchema>;
@@ -100,9 +104,9 @@ export const correlationUpdateInputSchema = z.object({
   edge_a: z.string().min(1),
   edge_b: z.string().min(1),
   window: z.enum(["1y", "all"]),
-  signal_overlap: z.number().min(0).max(1).optional(),
-  return_corr: z.number().min(-1).max(1).optional(),
-  run_batch: z.string().optional()
+  signal_overlap: z.number().min(0).max(1).nullable().optional(),
+  return_corr: z.number().min(-1).max(1).nullable().optional(),
+  run_batch: z.string().nullable().optional()
 });
 export type CorrelationUpdateInput = z.infer<typeof correlationUpdateInputSchema>;
 

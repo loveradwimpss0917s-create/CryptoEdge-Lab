@@ -146,6 +146,43 @@ describe("GET /internal/jobs?status=queued (claim + stuck requeue)", () => {
   });
 });
 
+describe("POST /internal/regimes (2026-07: null vs. omitted hmm_state/probs)", () => {
+  it("accepts an explicit null for hmm_state/probs, not just an omitted key", async () => {
+    // Pydantic's model_dump(mode="json") always serializes an unset
+    // Optional[...] field as `null`, never omits the key — a plain
+    // z.number().optional() (no .nullable()) rejects that with a 400,
+    // which broke the very first live regimes_daily backfill.
+    const res = await internalRoute.request(
+      "/regimes",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          regimes: [
+            {
+              dt: "2026-07-01",
+              trend: "up",
+              vol: "low",
+              liquidity: "normal",
+              hmm_state: null,
+              probs: null,
+              model_version: "rule-based-1.0"
+            }
+          ]
+        })
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+
+    const row = await env.DB.prepare(`SELECT hmm_state, probs FROM regimes_daily WHERE dt = '2026-07-01'`).first<{
+      hmm_state: number | null;
+      probs: string | null;
+    }>();
+    expect(row?.hmm_state).toBeNull();
+    expect(row?.probs).toBeNull();
+  });
+});
+
 describe("GET /internal/backup/dump (2026-07 review Task 7)", () => {
   it("rejects a table name outside the whitelist", async () => {
     const res = await internalRoute.request("/backup/dump?table=sqlite_master", {}, env);
