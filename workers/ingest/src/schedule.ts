@@ -51,7 +51,7 @@ export const STREAMS_1D: Adapter[] = [
   // CME-gap seed edge), econ_calendar (FOMC/CPI/NFP -> events table).
 ];
 
-// ---- tick-weekly: "0 3 * * 0" ---------------------------------------------
+// ---- tick-weekly: "0 3 * * sun" ---------------------------------------------
 export const STREAMS_WEEKLY: Adapter[] = [
   // TODO (docs/03 §2.5): cftc_cot (COT report), google_trends. This tick is
   // also where the ingest Worker triggers the `research-weekly`
@@ -65,7 +65,7 @@ const CRON_TO_TIER: Record<string, Tier> = {
   "*/5 * * * *": "5m",
   "17 * * * *": "1h",
   "23 1 * * *": "1d",
-  "0 3 * * 0": "weekly"
+  "0 3 * * sun": "weekly"
 };
 
 export function tierForCron(cron: string): Tier {

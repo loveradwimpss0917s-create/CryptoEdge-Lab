@@ -47,7 +47,7 @@ Cron Triggers (4 本 — Free 上限内)
   │                             (1m 足は 5 分毎に直近 5 本まとめ取り — 1 分 Cron は不要)
   ├─ "17 * * * *"   tick-1h  : 1h 足確定, funding 履歴, basis, オプションサマリ
   ├─ "23 1 * * *"   tick-1d  : 日次系 G1→G2→G3 (docs/03 §4), 品質日報, latest 整合
-  └─ "0 3 * * 0"    tick-wk  : 週次系 (COT, Trends), Actions への weekly dispatch
+  └─ "0 3 * * sun"  tick-wk  : 週次系 (COT, Trends), Actions への weekly dispatch
 ```
 
 Queues の代替 = **D1 タスク表 `ingest_tasks`** (docs/02 §2.1):

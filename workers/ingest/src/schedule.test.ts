@@ -6,7 +6,7 @@ describe("tierForCron (docs/01 §4.6 cron -> tier map)", () => {
     expect(tierForCron("*/5 * * * *")).toBe("5m");
     expect(tierForCron("17 * * * *")).toBe("1h");
     expect(tierForCron("23 1 * * *")).toBe("1d");
-    expect(tierForCron("0 3 * * 0")).toBe("weekly");
+    expect(tierForCron("0 3 * * sun")).toBe("weekly");
   });
 
   it("throws on an unrecognized cron expression", () => {
