@@ -92,3 +92,56 @@ describe("GET /internal/edges/:id/trial-count", () => {
     expect(body.trial_count).toBe(2);
   });
 });
+
+describe("GET /internal/jobs?status=queued (claim + stuck requeue)", () => {
+  it("claims queued jobs, oldest first, and records started_at", async () => {
+    await env.DB.prepare(
+      `INSERT INTO jobs (job_id, kind, payload, status, priority, created_at) VALUES (?1, 'eep', '{}', 'queued', 5, ?2)`
+    )
+      .bind("j1", 100)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO jobs (job_id, kind, payload, status, priority, created_at) VALUES (?1, 'eep', '{}', 'queued', 5, ?2)`
+    )
+      .bind("j2", 200)
+      .run();
+
+    const res = await internalRoute.request("/jobs?status=queued&limit=1", {}, env);
+    const body = (await res.json()) as { jobs: { job_id: string; status: string; started_at: number }[] };
+    expect(body.jobs).toHaveLength(1);
+    expect(body.jobs[0]!.job_id).toBe("j1");
+    expect(body.jobs[0]!.status).toBe("dispatched");
+    expect(body.jobs[0]!.started_at).toBeGreaterThan(0);
+  });
+
+  it("requeues a job stuck in dispatched for over an hour before claiming", async () => {
+    const now = Date.now();
+    await env.DB.prepare(
+      `INSERT INTO jobs (job_id, kind, payload, status, priority, created_at, started_at)
+       VALUES (?1, 'eep', '{}', 'dispatched', 5, ?2, ?3)`
+    )
+      .bind("stuck", now - 120_000, now - 61 * 60 * 1000)
+      .run();
+
+    const res = await internalRoute.request("/jobs?status=queued&limit=5", {}, env);
+    const body = (await res.json()) as { jobs: { job_id: string }[] };
+    expect(body.jobs.map((j) => j.job_id)).toContain("stuck");
+  });
+
+  it("leaves a recently dispatched job alone", async () => {
+    const now = Date.now();
+    await env.DB.prepare(
+      `INSERT INTO jobs (job_id, kind, payload, status, priority, created_at, started_at)
+       VALUES (?1, 'eep', '{}', 'dispatched', 5, ?2, ?3)`
+    )
+      .bind("fresh", now - 60_000, now - 5 * 60 * 1000)
+      .run();
+
+    const res = await internalRoute.request("/jobs?status=queued&limit=5", {}, env);
+    const body = (await res.json()) as { jobs: { job_id: string }[] };
+    expect(body.jobs.map((j) => j.job_id)).not.toContain("fresh");
+
+    const row = await env.DB.prepare(`SELECT status FROM jobs WHERE job_id = 'fresh'`).first<{ status: string }>();
+    expect(row?.status).toBe("dispatched");
+  });
+});

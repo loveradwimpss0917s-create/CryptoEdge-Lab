@@ -65,19 +65,38 @@ internalRoute.get("/edges/:id/trial-count", async (c) => {
   return c.json({ edge_id: edgeId, trial_count: row?.n ?? 0 });
 });
 
+// A GitHub Actions run that claims a job and then dies (timeout, runner
+// OOM, workflow cancelled) leaves it stuck in 'dispatched' forever — this
+// project's jobs finish in minutes, so anything still dispatched after an
+// hour is abandoned, not merely slow. Requeuing happens as part of the
+// claim path (below) so it's self-healing without a separate cron
+// (2026-07 review, Task 7).
+const STUCK_DISPATCHED_MS = 60 * 60 * 1000;
+
 internalRoute.get("/jobs", async (c) => {
   const status = c.req.query("status") ?? "queued";
   const limit = Number(c.req.query("limit") ?? "5");
   if (status === "queued") {
-    // Atomic claim: move up to `limit` queued jobs to 'dispatched' in one statement.
+    const now = Date.now();
+    await c.env.DB.prepare(
+      `UPDATE jobs SET status = 'queued', started_at = NULL
+       WHERE status = 'dispatched' AND started_at IS NOT NULL AND started_at < ?1`
+    )
+      .bind(now - STUCK_DISPATCHED_MS)
+      .run();
+
+    // Atomic claim: move up to `limit` queued jobs to 'dispatched' in one
+    // statement, recording the dispatch time (via COALESCE so a later
+    // explicit status update never overwrites it) so a future claim can
+    // tell whether this job has gone stale.
     const { results } = await c.env.DB.prepare(
-      `UPDATE jobs SET status = 'dispatched'
+      `UPDATE jobs SET status = 'dispatched', started_at = COALESCE(started_at, ?2)
        WHERE job_id IN (
          SELECT job_id FROM jobs WHERE status = 'queued' ORDER BY priority ASC, created_at ASC LIMIT ?1
        )
        RETURNING *`
     )
-      .bind(limit)
+      .bind(limit, now)
       .all();
     return c.json({ jobs: results ?? [] });
   }

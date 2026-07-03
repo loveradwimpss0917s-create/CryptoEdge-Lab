@@ -30,7 +30,19 @@ export function EdgeDetailScreen() {
   if (error || !data) return <p className="text-reject">エッジの読み込みに失敗しました。</p>;
 
   const { edge } = data;
-  const evidence = edge.evidence ? (JSON.parse(edge.evidence) as { kind: string; ref: string; note?: string }[]) : [];
+  // edge.evidence is a free-text TEXT column (docs/02 §2.5) that's normally
+  // JSON but isn't schema-enforced at the DB layer; a malformed row would
+  // otherwise throw during render and take down the whole screen (2026-07
+  // review, Task 7).
+  let evidence: { kind: string; ref: string; note?: string }[] = [];
+  let evidenceRaw: string | null = null;
+  if (edge.evidence) {
+    try {
+      evidence = JSON.parse(edge.evidence) as { kind: string; ref: string; note?: string }[];
+    } catch {
+      evidenceRaw = edge.evidence;
+    }
+  }
   const nextStates = EDGE_TRANSITION_GRAPH[edge.status as EdgeStatus] ?? [];
 
   return (
@@ -55,6 +67,12 @@ export function EdgeDetailScreen() {
           <div>
             <h2 className="text-sm font-medium text-slate-400">反証</h2>
             <p>{edge.counter_evidence}</p>
+          </div>
+        )}
+        {evidenceRaw && (
+          <div>
+            <h2 className="text-sm font-medium text-slate-400">証拠 (JSON解析失敗、生データ表示)</h2>
+            <p className="whitespace-pre-wrap text-sm text-slate-300">{evidenceRaw}</p>
           </div>
         )}
         {evidence.length > 0 && (

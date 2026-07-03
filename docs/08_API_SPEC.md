@@ -69,7 +69,7 @@
 
 | Method Path | 説明 |
 |---|---|
-| GET `/internal/jobs?status=queued` | ジョブ取得 (dispatched へ CAS 遷移) |
+| GET `/internal/jobs?status=queued` | ジョブ取得 (dispatched へ CAS 遷移)。claim の直前に `dispatched` で 60 分超放置されたジョブを `queued` へ自動復帰 (2026-07 レビュー Task 7: Actions 側の異常終了で永久に取り残されるのを防ぐ) |
 | POST `/internal/jobs/{id}/status` | running/done/failed 報告 |
 | GET `/internal/edge-versions/{id}` | signal_spec/params/cost_model 取得 (EEP 実行に必要) |
 | GET `/internal/edges/{id}/trial-count` | 当該 edge の累積 screen+full run 数 (DSR の n_trials 自動取得元、docs/05 §3.7) |
