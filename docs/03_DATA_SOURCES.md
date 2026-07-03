@@ -36,7 +36,8 @@
 
 | source_id | 提供 | 主要エンドポイント/ストリーム | レート制限 | 備考 |
 |---|---|---|---|---|
-| `binance_rest` | Binance (spot+USD-M futures) | `/api/v3/klines`, `/fapi/v1/klines`, `/fapi/v1/fundingRate`, `/fapi/v1/premiumIndex`, `/futures/data/openInterestHist`, `/futures/data/topLongShortAccountRatio`, `topLongShortPositionRatio`, `globalLongShortAccountRatio`, `takerlongshortRatio`, `/fapi/v1/depth`, `/api/v3/aggTrades` | weight 制 (~1200/min, IP)。地域制限に注意 → 失敗時 `binance_data_vision` (下記) へフォールバック | 中核ソース。klines は `taker_buy_volume` 込みで CVD 計算可 |
+| ~~`binance_rest`~~ | ~~Binance (spot+USD-M futures) 直叩き~~ | — | — | **2026-07 に運用中止**: Binance の WAF が Cloudflare Workers の共有 egress IP を HTTP 403 (`fapi.binance.com`) / 451 (`api.binance.com`) でブロックすることを確認。地域制限リスクは元々本表で警告していたが、実際には全リクエストが恒常的に失敗した。ヘッダ調整では回避不可 (クラウド/データセンター帯 IP そのものを狙った既知のブロック)。tick-5m の価格・funding・OI は下記 `coingecko` へ全面移行 |
+| `coingecko` | CoinGecko public API | `/simple/price` (現在値), `/derivatives` (取引所横断の funding_rate/open_interest。Binance USDT-M perp を symbol+market でフィルタ) | 無料枠 10-30 req/min (IP)。ボット/サーバー利用を前提に公開されており、クラウド IP を積極的にブロックしない | tick-5m の主力ソース (schedule.ts `makeCoinGeckoPriceAdapter` / `makeCoinGeckoDerivativesAdapter`)。1 リクエストで全銘柄をまとめて取得するため Binance 直叩き版よりサブリクエスト消費は少ない。1m 足は擬似足 (open=high=low=close=price) — CoinGecko 無料枠に 1 分足 OHLC が無いため |
 | `binance_data_vision` | data.binance.vision | 日次 ZIP (klines/aggTrades/fundingRate 等の全履歴) | 制限緩い | **ヒストリカル一括バックフィル専用**。research-worker が直接取得し R2 へ |
 | `bybit_rest` | Bybit v5 | `/v5/market/kline`, `/v5/market/funding/history`, `/v5/market/open-interest`, `/v5/market/account-ratio` | 120 req/5s | funding 乖離 (050)、冗長系 |
 | `okx_rest` | OKX v5 | `/api/v5/market/candles`, `/api/v5/public/funding-rate-history`, `/api/v5/rubik/stat/*` (L/S, 清算) | 20 req/2s | 同上 |

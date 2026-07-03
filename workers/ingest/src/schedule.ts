@@ -7,24 +7,18 @@
 // right tier array here" — no other file needs to change (docs/03 §7
 // five-point checklist).
 
-import {
-  BINANCE_INSTRUMENTS,
-  makeBinanceFundingSnapshotAdapter,
-  makeBinanceKlines1mAdapter,
-  makeBinanceOpenInterestAdapter
-} from "./adapters/binance.js";
+import { BINANCE_INSTRUMENTS, makeCoinGeckoDerivativesAdapter, makeCoinGeckoPriceAdapter } from "./adapters/coingecko.js";
 import { alternativeMeFearGreedAdapter } from "./adapters/alternative-me.js";
 import { deribitDvolAdapter } from "./adapters/deribit.js";
 import type { Adapter } from "./adapters/types.js";
 
-const futuresInstruments = BINANCE_INSTRUMENTS.filter((i) => i.isFutures);
-
 // ---- tick-5m: "*/5 * * * *" ------------------------------------------
-// Budget: 3 (klines) + 2 (funding) + 2 (OI) = 7 requests, well under 40.
+// Budget: 1 (price, all instruments) + 1 (derivatives, all futures) = 2
+// requests, well under 40. Sourced via CoinGecko, not Binance directly
+// (docs/03 §2.1 — Binance's WAF blocks Cloudflare Workers' egress IPs).
 export const STREAMS_5M: Adapter[] = [
-  ...BINANCE_INSTRUMENTS.map(makeBinanceKlines1mAdapter),
-  ...futuresInstruments.map(makeBinanceFundingSnapshotAdapter),
-  ...futuresInstruments.map(makeBinanceOpenInterestAdapter)
+  makeCoinGeckoPriceAdapter(BINANCE_INSTRUMENTS),
+  makeCoinGeckoDerivativesAdapter(BINANCE_INSTRUMENTS)
 ];
 
 // ---- tick-1h: fires when the wall clock hits :15 each hour ---------------
