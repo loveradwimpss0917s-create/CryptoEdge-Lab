@@ -263,6 +263,22 @@ def main() -> int:
     base_url = os.environ["CRYPTOEDGE_API_URL"]
     token = os.environ["RESEARCH_API_TOKEN"]
 
+    # One-time safe diagnostic: reports shape, not content, of the R2
+    # endpoint secret. Never logs the value itself — GitHub Actions would
+    # mask an exact match anyway, but a value with extra whitespace
+    # wouldn't match the secret's redaction pattern and could leak
+    # (2026-07: added while chasing a "DNS Label" write failure that
+    # reproduced cleanly against real R2 locally but not in CI with
+    # byte-for-byte identical code, which points at the secret's actual
+    # configured value rather than the code).
+    raw_endpoint = os.environ.get("CRYPTOEDGE_R2_ENDPOINT", "")
+    logger.info(
+        "R2 endpoint diagnostic: length=%d has_leading_or_trailing_whitespace=%s starts_with_https=%s",
+        len(raw_endpoint),
+        raw_endpoint != raw_endpoint.strip(),
+        raw_endpoint.strip().startswith("https://")
+    )
+
     with httpx.Client(timeout=30.0) as http, InternalApiClient(base_url, token) as client:
         for target in BACKFILL_TARGETS:
             for tf in BACKFILL_TIMEFRAMES:

@@ -31,8 +31,13 @@ def _r2_config() -> tuple[str, str]:
     resolves to an empty string, not a missing key, so `os.environ[...]`
     doesn't raise; this masked a plain "secrets not configured" mistake
     as a confusing pyarrow internals error)."""
-    endpoint = os.environ.get("CRYPTOEDGE_R2_ENDPOINT")
-    bucket = os.environ.get("CRYPTOEDGE_R2_BUCKET")
+    # .strip(): a value copy-pasted from a dashboard (especially on mobile)
+    # can pick up a trailing newline/space invisibly. That's an easy way to
+    # get a byte-for-byte "valid-looking" secret that still breaks URL
+    # construction downstream (2026-07: suspected after the endpoint+region
+    # fixes reproduced cleanly against real R2 locally but not in CI).
+    endpoint = (os.environ.get("CRYPTOEDGE_R2_ENDPOINT") or "").strip()
+    bucket = (os.environ.get("CRYPTOEDGE_R2_BUCKET") or "").strip()
     if not endpoint or not bucket:
         missing = [
             name
