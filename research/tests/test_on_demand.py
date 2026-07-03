@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from cryptoedge_research.eval.pipeline import EepConfig
-from cryptoedge_research.jobs.on_demand import run_eep_for_edge_version
+from cryptoedge_research.jobs.on_demand import _bucket_events, _referenced_features, run_eep_for_edge_version
 
 BAR_MS = 3_600_000
 
@@ -66,6 +66,58 @@ def test_run_eep_for_edge_version_rejects_pure_noise():
     config = EepConfig(permutation_iterations=300, bootstrap_iterations=500, seed=42)
     result = run_eep_for_edge_version(edge_version, price_df, BAR_MS, n_trials=1, config=config)
     assert result.verdict.verdict != "ADOPT"
+
+
+def test_referenced_features_walks_and_or_not_and_both_cmp_operands():
+    when = {
+        "and": [
+            {"cmp": [{"feature": "a"}, ">", 0.5]},
+            {"or": [{"not": {"cmp": [{"feature": "b"}, "<", {"feature": "c"}]}}, {"event": {"type": "x"}}]},
+        ]
+    }
+    assert _referenced_features(when) == {"a", "b", "c"}
+
+
+def test_missing_referenced_feature_raises_instead_of_silently_never_firing():
+    price_df = pd.DataFrame(
+        {
+            "ts": [i * BAR_MS for i in range(5)],
+            "open": [100.0] * 5,
+            "close": [100.0] * 5,
+        }
+    )
+    edge_version = _edge_version({"cmp": [{"feature": "missing_feature"}, ">", 0.5]})
+    with pytest.raises(ValueError, match="missing_feature"):
+        run_eep_for_edge_version(edge_version, price_df, BAR_MS, n_trials=1)
+
+
+def test_bucket_events_assigns_by_bar_window_and_drops_out_of_range():
+    timestamps = [0, BAR_MS, 2 * BAR_MS]
+    events = [
+        {"ts": 500, "event_type": "cpi", "magnitude": 1.0},  # bar 0
+        {"ts": BAR_MS + 10, "event_type": "cpi", "magnitude": 2.0},  # bar 1
+        {"ts": -1, "event_type": "cpi", "magnitude": 9.0},  # before range, dropped
+        {"ts": 10 * BAR_MS, "event_type": "cpi", "magnitude": 9.0},  # after range, dropped
+    ]
+    buckets = _bucket_events(events, timestamps, BAR_MS)
+    assert [len(b) for b in buckets] == [1, 1, 0]
+    assert buckets[0][0].magnitude == 1.0
+    assert buckets[1][0].magnitude == 2.0
+
+
+def test_event_wired_through_from_raw_rows_makes_signal_fire():
+    price_df = pd.DataFrame(
+        {
+            "ts": [i * BAR_MS for i in range(5)],
+            "open": [100.0] * 5,
+            "close": [100.0] * 5,
+        }
+    )
+    edge_version = _edge_version({"event": {"type": "cpi_release"}})
+    events = [{"ts": 0, "event_type": "cpi_release", "magnitude": 1.0}]
+    result = run_eep_for_edge_version(edge_version, price_df, BAR_MS, n_trials=1, events=events)
+    trade_metric = next(m for m in result.metrics if m.segment == "overall" and m.metric == "trades")
+    assert trade_metric.value >= 1
 
 
 def test_short_direction_is_wired_through_edge_version():

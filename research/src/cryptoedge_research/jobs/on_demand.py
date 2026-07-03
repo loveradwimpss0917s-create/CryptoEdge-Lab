@@ -20,7 +20,7 @@ from typing import Any
 
 import pandas as pd
 
-from cryptoedge_research.dsl.evaluator import DslEvalInput, DslRegime, compute_fires
+from cryptoedge_research.dsl.evaluator import DslEvalInput, DslEvent, DslRegime, compute_fires
 from cryptoedge_research.eval.backtest import (
     CostModel,
     forward_returns_series,
@@ -40,6 +40,44 @@ from cryptoedge_research.io.lake import read_candles
 logger = logging.getLogger(__name__)
 
 
+def _referenced_features(expr: dict[str, Any]) -> set[str]:
+    """Walks a BoolExpr (docs/05 §9) collecting every `feature` name it
+    reads, mirroring the node shapes `evaluate_at` handles."""
+    if "and" in expr:
+        return {f for e in expr["and"] for f in _referenced_features(e)}
+    if "or" in expr:
+        return {f for e in expr["or"] for f in _referenced_features(e)}
+    if "not" in expr:
+        return _referenced_features(expr["not"])
+    if "cmp" in expr:
+        left, _op, right = expr["cmp"]
+        features = {left["feature"]}
+        if isinstance(right, dict):
+            features.add(right["feature"])
+        return features
+    return set()  # event/regime/time nodes reference no feature series
+
+
+def _bucket_events(
+    events: list[dict[str, Any]], timestamps: list[int], bar_interval_ms: int
+) -> list[list[DslEvent]]:
+    """Assigns each raw event row (`ts`, `event_type`, `magnitude`) to the
+    bar index whose `[timestamps[i], timestamps[i] + bar_interval_ms)`
+    window contains it, matching how `evaluate_at`'s `event` node looks
+    events up by bar index (docs/05 §9)."""
+    n = len(timestamps)
+    buckets: list[list[DslEvent]] = [[] for _ in range(n)]
+    if n == 0:
+        return buckets
+    start = timestamps[0]
+    for event in events:
+        idx = (event["ts"] - start) // bar_interval_ms
+        if 0 <= idx < n:
+            magnitude = event.get("magnitude") or 0.0
+            buckets[int(idx)].append(DslEvent(type=event["event_type"], magnitude=magnitude))
+    return buckets
+
+
 def run_eep_for_edge_version(
     edge_version: dict[str, Any],
     price_df: pd.DataFrame,
@@ -47,17 +85,25 @@ def run_eep_for_edge_version(
     n_trials: int,
     config: EepConfig | None = None,
     regimes: list[DslRegime | None] | None = None,
+    events: list[dict[str, Any]] | None = None,
 ) -> EepResult:
     """`price_df` needs `ts`, `open`, `close`, plus one column per feature the
     signal_spec's `when` clause references (docs/04 §3 feature store — in
     production these columns come from a join against the feature Parquet
     files, done by the caller before this function runs). Any column beyond
     ts/open/close is treated as a feature series keyed by its column name.
+    A `when` clause referencing a feature outside that set can't be
+    evaluated at all — rather than silently returning False (never-fires)
+    at every bar, this raises so the job is recorded as failed instead of
+    producing a misleading REJECT/zero-trades verdict (2026-07 review,
+    Task 5).
 
     `regimes`, if omitted, means every trade is classified "unknown" —
     correct behavior when regime data hasn't been merged in yet, but the
     caller (main(), a future feature-store integration) should supply it
-    once available (docs/04 §6)."""
+    once available (docs/04 §6). `events`, if omitted, means the `when`
+    clause's `event` nodes never fire — same caveat, supplied by main()
+    via `InternalApiClient.get_events`."""
     signal_spec = json.loads(edge_version["signal_spec"])
     cost_model_raw = json.loads(edge_version["cost_model"])
     cost_model = CostModel(taker_bps=cost_model_raw["taker_bps"], slippage_bps=cost_model_raw["slippage_bps"])
@@ -74,10 +120,16 @@ def run_eep_for_edge_version(
     feature_columns = [c for c in price_df.columns if c not in ("ts", "open", "close")]
     features = {col: price_df[col].tolist() for col in feature_columns}
 
+    missing_features = _referenced_features(signal_spec["when"]) - set(features)
+    if missing_features:
+        raise ValueError(
+            f"signal_spec references feature(s) not available in the fetched data: {sorted(missing_features)}"
+        )
+
     dsl_input = DslEvalInput(
         timestamps=timestamps,
         features=features,
-        events=[[] for _ in range(n)],
+        events=_bucket_events(events or [], timestamps, bar_interval_ms),
         regimes=regime_series,
     )
 
@@ -174,9 +226,16 @@ def main() -> int:
         instrument_id = edge_version["instrument_id"]
         price_df = read_candles(instrument_id, "1h")
         bar_interval_ms = 3_600_000
+        events = (
+            client.get_events(int(price_df["ts"].min()), int(price_df["ts"].max()) + bar_interval_ms)
+            if len(price_df) > 0
+            else []
+        )
 
         try:
-            result = run_eep_for_edge_version(edge_version, price_df, bar_interval_ms, n_trials)
+            result = run_eep_for_edge_version(
+                edge_version, price_df, bar_interval_ms, n_trials, events=events
+            )
             snapshot_id = f"snapshot-{uuid.uuid4()}"
             dataset_hash = "unknown"  # TODO: real snapshot manifest hashing (docs/01 §4.3)
             run_id = _submit_result(client, edge_version_id, dataset_hash, snapshot_id, result, git_sha)

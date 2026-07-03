@@ -30,6 +30,25 @@ internalRoute.get("/edge-versions/:id", async (c) => {
   return c.json({ edge_version: version });
 });
 
+// The DSL's "event" node (docs/05 §9) needs real events data to evaluate
+// against; research-worker fetches the window it's backtesting over here
+// and buckets it per-bar itself (2026-07 review, Task 5 — previously
+// on_demand.py always passed an empty events series, silently making every
+// event-referencing signal_spec never fire instead of evaluating for real).
+internalRoute.get("/events", async (c) => {
+  const from = Number(c.req.query("from"));
+  const to = Number(c.req.query("to"));
+  if (!Number.isFinite(from) || !Number.isFinite(to)) {
+    return c.json({ type: "about:blank", title: "from/to query params (unix ms) are required", status: 400 }, 400);
+  }
+  const { results } = await c.env.DB.prepare(
+    `SELECT event_type, ts, magnitude FROM events WHERE ts >= ?1 AND ts < ?2 ORDER BY ts ASC`
+  )
+    .bind(from, to)
+    .all();
+  return c.json({ events: results ?? [] });
+});
+
 // docs/05 §3.7 DSR needs "cumulative screen+full run count against the
 // edge" as n_trials; research-worker can't compute that itself (it never
 // touches D1 directly), so it fetches this before running the EEP when the

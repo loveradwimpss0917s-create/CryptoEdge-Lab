@@ -134,6 +134,11 @@ class InternalApiClient:
         run about to be started (docs/05 §3.7 n_trials = this count + 1)."""
         return self._get(f"/internal/edges/{edge_id}/trial-count")["trial_count"]
 
+    def get_events(self, from_ts: int, to_ts: int) -> list[dict[str, Any]]:
+        """Events with `from_ts <= ts < to_ts`, for wiring the DSL's `event`
+        node (docs/05 §9) with real data instead of an always-empty series."""
+        return self._get("/internal/events", params={"from": from_ts, "to": to_ts})["events"]
+
     def update_job_status(
         self, job_id: str, status: str, error: str | None = None, result_ref: str | None = None
     ) -> None:

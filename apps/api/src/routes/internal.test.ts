@@ -40,6 +40,28 @@ describe("GET /internal/edge-versions/:id", () => {
   });
 });
 
+describe("GET /internal/events", () => {
+  it("rejects missing/invalid from-to params", async () => {
+    const res = await internalRoute.request("/events?from=abc&to=100", {}, env);
+    expect(res.status).toBe(400);
+  });
+
+  it("returns events within [from, to) ordered by ts", async () => {
+    const stmt = env.DB.prepare(
+      `INSERT INTO events (event_id, event_type, ts, source_id, dedupe_key, magnitude)
+       VALUES (?1, ?2, ?3, 'src', ?1, ?4)`
+    );
+    await stmt.bind("ev1", "cpi_release", 100, 1.5).run();
+    await stmt.bind("ev2", "cpi_release", 200, 2.0).run();
+    await stmt.bind("ev3", "cpi_release", 300, 3.0).run(); // outside [100,300)
+
+    const res = await internalRoute.request("/events?from=100&to=300", {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { events: { event_type: string; ts: number; magnitude: number }[] };
+    expect(body.events.map((e) => e.ts)).toEqual([100, 200]);
+  });
+});
+
 describe("GET /internal/edges/:id/trial-count", () => {
   it("returns 0 for an edge with no runs yet", async () => {
     const res = await internalRoute.request("/edges/e1/trial-count", {}, env);
