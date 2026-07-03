@@ -11,7 +11,6 @@ import { streamsForTier, tiersForTick, type Tier } from "./schedule.js";
 import { drainRetryQueue } from "./tasks.js";
 import { dispatchResearchEvent } from "./notify/github-dispatch.js";
 import { notifyTelegram } from "./notify/telegram.js";
-import { runReachabilityDiagnostic } from "./diagnostics.js";
 
 const GITHUB_REPO = "loveradwimpss0917s-create/CryptoEdge-Lab";
 
@@ -51,9 +50,6 @@ export default {
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const tiers = tiersForTick(new Date(controller.scheduledTime));
     ctx.waitUntil(handleTick(tiers, env));
-    // TEMPORARY (docs/diagnostics.ts) — remove once the host-reachability
-    // investigation is done.
-    ctx.waitUntil(runReachabilityDiagnostic(env).catch(() => undefined));
   },
 
   // Manual trigger for local dev / smoke testing (`wrangler dev` -> curl /__tick?tier=5m).

@@ -7,18 +7,27 @@
 // right tier array here" — no other file needs to change (docs/03 §7
 // five-point checklist).
 
-import { BINANCE_INSTRUMENTS, makeCoinGeckoDerivativesAdapter, makeCoinGeckoPriceAdapter } from "./adapters/coingecko.js";
+import {
+  TRACKED_INSTRUMENTS,
+  makeOkxCandlesAdapter,
+  makeOkxFundingRateAdapter,
+  makeOkxOpenInterestAdapter
+} from "./adapters/okx.js";
 import { alternativeMeFearGreedAdapter } from "./adapters/alternative-me.js";
 import { deribitDvolAdapter } from "./adapters/deribit.js";
 import type { Adapter } from "./adapters/types.js";
 
+const futuresInstruments = TRACKED_INSTRUMENTS.filter((i) => i.isFutures);
+
 // ---- tick-5m: "*/5 * * * *" ------------------------------------------
-// Budget: 1 (price, all instruments) + 1 (derivatives, all futures) = 2
-// requests, well under 40. Sourced via CoinGecko, not Binance directly
-// (docs/03 §2.1 — Binance's WAF blocks Cloudflare Workers' egress IPs).
+// Budget: 3 (candles) + 2 (funding) + 2 (OI) = 7 requests, well under 40.
+// Sourced via OKX, not Binance/CoinGecko (docs/03 §2.1 — Binance and Bybit
+// block Cloudflare Workers' egress IPs outright; CoinGecko's free-tier
+// rate limit gets exhausted by the whole platform's shared IP pool).
 export const STREAMS_5M: Adapter[] = [
-  makeCoinGeckoPriceAdapter(BINANCE_INSTRUMENTS),
-  makeCoinGeckoDerivativesAdapter(BINANCE_INSTRUMENTS)
+  ...TRACKED_INSTRUMENTS.map(makeOkxCandlesAdapter),
+  ...futuresInstruments.map(makeOkxFundingRateAdapter),
+  ...futuresInstruments.map(makeOkxOpenInterestAdapter)
 ];
 
 // ---- tick-1h: fires when the wall clock hits :15 each hour ---------------
