@@ -7,6 +7,12 @@
   "observability": {
     "enabled": true
   },
+  // docs/10: gates require-access's fail-open dev-mode bypass — set so a
+  // deploy without Cloudflare Access configured fails closed on mutations
+  // instead of silently allowing unauthenticated writes.
+  "vars": {
+    "ENVIRONMENT": "production"
+  },
   // docs/01 §4.1: Free plan, 2 Workers total (api + ingest). No Queues, no
   // Workers Paid features. Static Assets serves the web SPA from this same
   // Worker so requests to it don't count against the Free request quota.

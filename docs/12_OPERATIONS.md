@@ -5,6 +5,24 @@
 - 環境: `production` のみ (単一ユーザ)。破壊的検証は `wrangler dev` + ローカル D1 で行う。research は git_sha 固定で再現可能なため staging 不要と判断
 - ロールバック: Workers は直前バージョンへ即時 rollback 可。D1 は前方マイグレーションのみなので、破壊的変更は「新テーブル追加 → 移行 → 旧テーブル放置」の expand パターンで行う
 
+### 1.1 デプロイ前チェックリスト: Cloudflare Access 設定 (必須・2026-07 レビューで発見)
+
+`apps/api/wrangler.jsonc` の `vars.ENVIRONMENT` は `"production"` に設定済み。これにより
+`ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` が未設定の間、`/api/v1/*` への **変異系リクエスト
+(POST/PUT/DELETE) は 401 で拒否**される (フェイルクローズ)。GET は Access 設定前でも
+閲覧できるが、書き込みを有効にするには以下が必要:
+
+1. Cloudflare Zero Trust ダッシュボード → Access → Applications で
+   `cryptoedge-api.<subdomain>.workers.dev` を保護対象アプリケーションとして追加
+2. Application Audience (AUD) タグをコピー
+3. GitHub Secrets に追加:
+   - `ACCESS_TEAM_DOMAIN` (例: `your-team.cloudflareaccess.com`)
+   - `ACCESS_AUD`
+4. `wrangler.jsonc` の `vars` または deploy 時の `--var` でこれらを Worker に渡すか、
+   Secrets として `wrangler secret put` で設定 (機密性を考えると Secret 推奨)
+5. デプロイ後、`curl -I https://.../api/v1/edges -X POST` が Access のログインページ
+   (もしくは JWT なしでの 401) を返すことを確認
+
 ## 2. 監視・通知
 
 | 対象 | 手段 | 通知 |
