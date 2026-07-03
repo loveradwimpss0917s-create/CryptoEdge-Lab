@@ -21,14 +21,14 @@
     {
       "binding": "DB",
       "database_name": "cryptoedge",
-      "database_id": "REPLACE_WITH_WRANGLER_D1_CREATE_OUTPUT",
+      "database_id": "c577a62b-6b1c-4cc7-8912-d98161a0e3ae",
       "migrations_dir": "../../migrations"
     }
   ],
   "kv_namespaces": [
     {
       "binding": "CONFIG",
-      "id": "REPLACE_WITH_WRANGLER_KV_CREATE_OUTPUT"
+      "id": "c29fc2267e3641178e190b740563e821"
     }
   ],
   "r2_buckets": [

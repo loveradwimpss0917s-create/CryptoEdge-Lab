@@ -12,7 +12,7 @@ import { drainRetryQueue } from "./tasks.js";
 import { dispatchResearchEvent } from "./notify/github-dispatch.js";
 import { notifyTelegram } from "./notify/telegram.js";
 
-const GITHUB_REPO = "REPLACE_WITH_owner/CryptoEdge-Lab";
+const GITHUB_REPO = "loveradwimpss0917s-create/CryptoEdge-Lab";
 
 async function runAdapters(env: Env, tier: Tier): Promise<{ ok: number; failed: number }> {
   const adapters = streamsForTier(tier);
