@@ -7,6 +7,7 @@ import { newId } from "@cryptoedge/shared";
 import type { Env } from "./env.js";
 import { enqueueIngestTask, touchIngestState, recordStreamError } from "./db.js";
 import { checkAndEscalate } from "./quality/consecutive-errors.js";
+import { checkQuotaThresholds } from "./quality/quota-alert.js";
 import { streamsForTier, tiersForTick, type Tier } from "./schedule.js";
 import { drainRetryQueue } from "./tasks.js";
 import { dispatchResearchEvent } from "./notify/github-dispatch.js";
@@ -91,6 +92,13 @@ async function handleTick(
       /* notification failures must never fail the tick */
     });
   }
+
+  // docs/12 §2 "80% Telegram + 自動緩和" — checked every tick since it's a
+  // couple of cheap D1 reads, well inside the read budget (2026-07 review,
+  // Task 7).
+  await checkQuotaThresholds(env).catch(() => {
+    /* quota alerting must never fail the tick */
+  });
 
   // docs/01 §3.2: the Worker is the primary trigger for research-worker,
   // GitHub's own `schedule:` is only a backup.

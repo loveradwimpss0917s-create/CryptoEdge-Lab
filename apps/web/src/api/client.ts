@@ -63,6 +63,18 @@ export interface MarketSnapshot {
   snapshot: Record<string, { v: number; ts: number; updated_at: number } | undefined>;
 }
 
+export interface QuotaRow {
+  resource: string;
+  value: number;
+  budget: number;
+  usage_ratio: number | null;
+}
+
+export interface QuotaOverview {
+  dt: string;
+  quota: QuotaRow[];
+}
+
 export const api = {
   listEdges: (params?: { status?: string; category?: string; q?: string }) => {
     const qs = new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v) as string[][]);
@@ -75,5 +87,6 @@ export const api = {
       `/edges/${edgeId}/transitions`,
       { method: "POST", body: JSON.stringify({ to_status, reason }) }
     ),
-  marketOverview: () => request<MarketSnapshot>("/market/overview")
+  marketOverview: () => request<MarketSnapshot>("/market/overview"),
+  quotaOverview: () => request<QuotaOverview>("/ops/quota")
 };

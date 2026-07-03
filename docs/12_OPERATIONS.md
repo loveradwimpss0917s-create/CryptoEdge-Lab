@@ -31,7 +31,7 @@
 | Worker エラー | Workers Logs (無料範囲) + dq_issues への例外記録 | 例外急増 → Telegram |
 | Cron 実行 | `ingest_state.last_run_at` の自己ヘルスチェック (tier ごと期待間隔超過で警報) | critical |
 | daily research | 04:00 UTC までに daily-light 完了報告が来なければ警報 | critical |
-| **無料枠ヘッドルーム** | `quota_usage` (docs/13 §7): D1 サイズ/書込、R2、Actions 分数、KV 書込 | 60% 注意 (UI) / 80% Telegram + 自動緩和 |
+| **無料枠ヘッドルーム** | `quota_usage` (docs/13 §7): D1 サイズ/書込、R2、Actions 分数、KV 書込。`GET /api/v1/ops/quota` + Today 画面の使用率バーで常設表示、ingest tick 毎に DQ-10 で自己監視 (2026-07 レビュー Task 7実装済み。**現状は d1_writes のみ計測** — R2/Actions分数/KV は Task4 のR2書込パスができてから追加) | 80% で dq_issues (DQ-10) + Telegram 通知。「自動緩和」(保持期間短縮等) は docs/13 §6 のトリガー表通り手動判断、未自動化 |
 | コスト全体 | **定常 ¥0/月** (Cloudflare Free + GitHub Free + Telegram 無料)。課金が発生したらそれ自体が異常 | 課金検知 = 即調査 |
 
 ## 3. バックアップ・復旧

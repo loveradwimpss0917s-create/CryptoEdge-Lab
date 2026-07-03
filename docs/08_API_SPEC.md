@@ -50,6 +50,7 @@
 | GET `/health/issues?status=` / POST `/health/issues/{id}/ack` | DQ issues |
 | POST `/health/refill` | 手動リフィル (body: stream_id, from, to) → jobs |
 | GET `/health/sources` / PATCH `/health/sources/{id}` | ソース有効/無効 |
+| GET `/ops/quota` | 当日の `quota_usage` (resource, value, budget, usage_ratio)。Today 画面の使用率バーの元 (2026-07 レビュー Task 7) |
 
 ### Reports / Research Pack (AI ハンドオフ) / Jobs / Settings
 
