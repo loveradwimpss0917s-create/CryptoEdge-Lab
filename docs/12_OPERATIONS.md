@@ -45,7 +45,7 @@
 | 頻度 | 作業 |
 |---|---|
 | 毎朝 (自動) | DQ 日報、劣化監視、Briefing |
-| 週次 (自動) | アーカイブローテーション、バックアップ、live smoke (docs/11 §2)、Edge 相関更新 |
+| 週次 (自動) | アーカイブローテーション、バックアップ、live smoke (docs/11 §2)、Edge 相関更新、R2 データレイク同期 (`lake-sync.yml`: candles 差分バックフィル、D1 metrics/OI ミラー、regimes_daily バックフィル、スナップショット manifest 更新) |
 | 月次 (人間 30 分) | コストレビュー、WATCH Edge の再評価キュー確認、依存パッケージ更新 (Renovate PR のマージ)、HMM 再学習結果の確認 |
 | 四半期 (人間 2h) | 閾値セット (thresholds.eep) の見直し (変更は新 version として記録)、有料データ費用対効果、D1 容量トレンド、経済カレンダー翌年分シード |
 | 年次 | protocol_version 見直し + 全 Edge 一括再評価、Cloudflare/GitHub 料金プラン再評価 |

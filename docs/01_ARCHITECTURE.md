@@ -72,11 +72,17 @@ Queues の代替 = **D1 タスク表 `ingest_tasks`** (docs/02 §2.1):
    - Edge 相関・ポートフォリオ統計 / HMM 更新 (月 1)
    - R2 コンパクション: raw NDJSON → gzip Parquet 化・raw 削除 (90 日超)
    - D1 → R2 バックアップ / アーカイブローテーション
+[lake-sync]    独立 workflow (`lake-sync.yml`)。手動連打で初期の数年分バックフィルを
+               完了させ、以降は週次 (~15分) で増分同期 (docs/01 §4.3, 2026-07 レビュー Task 4):
+   - data.binance.vision の日次 ZIP から candles Parquet を差分バックフィル (80K行/日以下にスロットリング)
+   - D1 `metrics`/`open_interest` → R2 curated Parquet ミラー (`/internal/backup/dump` 経由)
+   - `regimes_daily` の過去分バックフィル (nightly.py は当日分のみのため)
+   - スナップショット manifest 更新 → `dataset_hash` (on_demand.py が eval_runs に記録)
 [on-demand]    workflow_dispatch / UI からの評価要求 (EEP full, 1 Edge ~10-15分)
 ```
 
 - スケジュールは **Worker からの repository_dispatch を正**とする (GitHub の schedule トリガーは遅延・スキップがあるため信頼しない。schedule は保険として併設)
-- 分数予算: daily 10分×30 + weekly 90分×5 + on-demand 15分×20 + CI ≈ **1,200 分/月 < 2,000 分** (docs/13 §3)。リポジトリを public にすれば標準ランナー分数は無制限になるが、研究内容の秘匿を優先して private 前提で予算設計する
+- 分数予算: daily 10分×30 + weekly 90分×5 + lake-sync 15分×5 + on-demand 15分×20 + CI ≈ **1,275 分/月 < 2,000 分** (docs/13 §3)。リポジトリを public にすれば標準ランナー分数は無制限になるが、研究内容の秘匿を優先して private 前提で予算設計する
 
 ### 3.3 配信・分析フロー (ブラウザ層)
 
@@ -196,7 +202,8 @@ CryptoEdge-Lab/
 │   ├── ci.yml  deploy.yml
 │   ├── research-daily.yml         # repository_dispatch: research-daily (+schedule 保険)
 │   ├── research-weekly.yml        # repository_dispatch: research-weekly (+schedule 保険)
-│   └── research-on-demand.yml     # workflow_dispatch + repository_dispatch
+│   ├── research-on-demand.yml     # workflow_dispatch + repository_dispatch
+│   └── lake-sync.yml              # workflow_dispatch (初期バックフィル用連打) + weekly schedule
 └── package.json / pnpm-workspace.yaml / turbo.json
 ```
 

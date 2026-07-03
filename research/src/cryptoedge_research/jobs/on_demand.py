@@ -35,7 +35,7 @@ from cryptoedge_research.io.internal_client import (
     SubmitVerdictRequest,
     VerdictReason,
 )
-from cryptoedge_research.io.lake import read_candles
+from cryptoedge_research.io.lake import read_candles, read_dataset_hash
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +237,11 @@ def main() -> int:
                 edge_version, price_df, bar_interval_ms, n_trials, events=events
             )
             snapshot_id = f"snapshot-{uuid.uuid4()}"
-            dataset_hash = "unknown"  # TODO: real snapshot manifest hashing (docs/01 §4.3)
+            # docs/01 §4.4: fingerprints exactly which R2 data version this
+            # run evaluated against (jobs/lake_sync.write_snapshot_manifest
+            # writes it weekly). "unknown" only if lake_sync hasn't run yet
+            # (2026-07 review, Task 4).
+            dataset_hash = read_dataset_hash()
             run_id = _submit_result(client, edge_version_id, dataset_hash, snapshot_id, result, git_sha)
             client.update_job_status(job["job_id"], "done", result_ref=run_id)
             logger.info("run %s completed: %s", run_id, result.verdict.verdict)

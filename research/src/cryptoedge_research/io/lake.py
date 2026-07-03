@@ -9,6 +9,7 @@ real R2 in CI (`CRYPTOEDGE_R2_*`).
 
 from __future__ import annotations
 
+import datetime
 import os
 from pathlib import Path
 
@@ -84,6 +85,89 @@ def list_prefix(prefix: str) -> list[str]:
     selector = pafs.FileSelector(f"{bucket}/{prefix}", recursive=False, allow_not_found=True)
     infos = s3.get_file_info(selector)
     return sorted(info.path.removeprefix(f"{bucket}/") for info in infos)
+
+
+def list_prefix_details(prefix: str, recursive: bool = False) -> list[dict[str, object]]:
+    """Like `list_prefix`, but returns `[{key, size, mtime}, ...]` — a cheap
+    fingerprint for building the snapshot manifest (docs/01 §4.4) without
+    re-reading potentially gigabytes of Parquet content on every run
+    (2026-07 review, Task 4)."""
+    local_root = _local_root()
+    if local_root is not None:
+        base = local_root / prefix
+        if not base.exists():
+            return []
+        paths = base.rglob("*") if recursive else base.iterdir()
+        return [
+            {
+                "key": f"{prefix}/{p.relative_to(base).as_posix()}" if recursive else f"{prefix}/{p.name}",
+                "size": p.stat().st_size,
+                "mtime": datetime.datetime.fromtimestamp(p.stat().st_mtime, tz=datetime.UTC).isoformat()
+            }
+            for p in paths
+            if p.is_file()
+        ]
+
+    import pyarrow.fs as pafs
+
+    endpoint = os.environ["CRYPTOEDGE_R2_ENDPOINT"]
+    bucket = os.environ["CRYPTOEDGE_R2_BUCKET"]
+    s3 = pafs.S3FileSystem(endpoint_override=endpoint)
+    selector = pafs.FileSelector(f"{bucket}/{prefix}", recursive=recursive, allow_not_found=True)
+    infos = s3.get_file_info(selector)
+    return [
+        {
+            "key": info.path.removeprefix(f"{bucket}/"),
+            "size": info.size,
+            "mtime": info.mtime.isoformat() if info.mtime else None
+        }
+        for info in infos
+        if info.type == pafs.FileType.File
+    ]
+
+
+def read_bytes(key: str) -> bytes:
+    """Reads a non-Parquet file (e.g. a snapshot manifest) at `key`."""
+    local_root = _local_root()
+    if local_root is not None:
+        return (local_root / key).read_bytes()
+
+    import pyarrow.fs as pafs
+
+    endpoint = os.environ["CRYPTOEDGE_R2_ENDPOINT"]
+    bucket = os.environ["CRYPTOEDGE_R2_BUCKET"]
+    s3 = pafs.S3FileSystem(endpoint_override=endpoint)
+    with s3.open_input_file(f"{bucket}/{key}") as f:
+        return f.read()
+
+
+def write_bytes(key: str, data: bytes) -> None:
+    """Writes a non-Parquet file (e.g. a snapshot manifest) at `key`."""
+    local_root = _local_root()
+    if local_root is not None:
+        path = local_root / key
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return
+
+    import pyarrow.fs as pafs
+
+    endpoint = os.environ["CRYPTOEDGE_R2_ENDPOINT"]
+    bucket = os.environ["CRYPTOEDGE_R2_BUCKET"]
+    s3 = pafs.S3FileSystem(endpoint_override=endpoint)
+    with s3.open_output_stream(f"{bucket}/{key}") as f:
+        f.write(data)
+
+
+def read_dataset_hash() -> str:
+    """The current snapshot's fingerprint (docs/01 §4.4), written by
+    `jobs/lake_sync.write_snapshot_manifest`. Falls back to `"unknown"`
+    before that job has ever run — matching the placeholder
+    `jobs/on_demand.py` used before this existed (2026-07 review, Task 4)."""
+    try:
+        return read_bytes("snapshots/latest/dataset_hash.txt").decode("utf-8").strip()
+    except OSError:
+        return "unknown"
 
 
 def delete_prefix(prefix: str) -> None:

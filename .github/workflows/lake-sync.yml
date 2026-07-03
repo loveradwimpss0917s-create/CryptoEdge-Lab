@@ -1,0 +1,39 @@
+name: lake-sync
+
+# docs/01 §3.2/§4.3, docs/03 §5, 2026-07 review Task 4: builds and
+# maintains the R2 data lake research-worker/DuckDB-WASM read from —
+# historical candle backfill (data.binance.vision), D1 metrics/
+# open_interest mirrored into curated Parquet, regimes_daily backfill,
+# and a snapshot manifest (dataset_hash for eval_runs).
+#
+# Each run only fetches what's missing since the last run, throttled per
+# timeframe (docs/01 §4.1 "バックフィルは 80K 行/日以下にスロットリング"),
+# so the initial multi-year backfill is expected to take several manual
+# workflow_dispatch runs before the weekly schedule alone keeps it current.
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 4 * * 0" # weekly, offset an hour from research-weekly's 03:00 UTC
+
+jobs:
+  lake-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: research
+    env:
+      CRYPTOEDGE_API_URL: ${{ secrets.CRYPTOEDGE_API_URL }}
+      RESEARCH_API_TOKEN: ${{ secrets.RESEARCH_API_TOKEN }}
+      CRYPTOEDGE_R2_ENDPOINT: ${{ secrets.CRYPTOEDGE_R2_ENDPOINT }}
+      CRYPTOEDGE_R2_BUCKET: ${{ secrets.CRYPTOEDGE_R2_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.5.x"
+      - run: uv sync
+      - name: R2 lake sync (historical backfill + D1 mirror + regimes + snapshot manifest)
+        run: uv run python -m cryptoedge_research.jobs.lake_sync
