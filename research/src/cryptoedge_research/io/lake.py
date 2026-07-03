@@ -82,6 +82,15 @@ def _s3_filesystem(endpoint: str):
     return pafs.S3FileSystem(endpoint_override=host, scheme=scheme, region="auto")
 
 
+# Mirrors jobs/lake_sync._MAX_PLAUSIBLE_MS: a self-heal for `ts` values
+# already written to R2 before that module started normalizing
+# microsecond-scale Binance timestamps down to milliseconds (found live —
+# a mixed-scale column crashed downstream date math). Read-time
+# normalization means already-corrupted rows fix themselves the next time
+# something reads and rewrites them, with no separate backfill/migration.
+_MAX_PLAUSIBLE_MS = 4_102_444_800_000  # 2100-01-01T00:00:00Z
+
+
 def read_candles(instrument_id: str, tf: str) -> pd.DataFrame:
     """Reads `curated/market/candles_{tf}/{instrument_id}/data.parquet`
     (docs/01 §4.3 R2 layout) and returns it sorted by `ts` ascending."""
@@ -100,6 +109,8 @@ def read_candles(instrument_id: str, tf: str) -> pd.DataFrame:
         table = pq.read_table(key, filesystem=s3)
 
     df = table.to_pandas()
+    ts = df["ts"].astype("int64")
+    df["ts"] = ts.where(ts <= _MAX_PLAUSIBLE_MS, ts // 1000)
     return df.sort_values("ts").reset_index(drop=True)
 
 

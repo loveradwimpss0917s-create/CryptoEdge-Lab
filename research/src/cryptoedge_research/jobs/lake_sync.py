@@ -110,6 +110,23 @@ def _zip_url(market_path: str, symbol: str, tf: str, date: datetime.date) -> str
     return f"{_DATA_VISION_BASE}/{market_path}/daily/klines/{symbol}/{tf}/{filename}"
 
 
+# Binance's kline CSVs switched to microsecond-precision open_time/close_time
+# for some symbols/date ranges at some point in 2025 — not documented
+# anywhere obvious, found live: a from-scratch backfill spanning 2019-2026
+# wrote a `ts` column mixing millisecond-scale (old) and microsecond-scale
+# (new) values, which crashed the *next* run's date math with
+# "ValueError: year 58469 is out of range" (58469 ≈ what you get treating a
+# microsecond value as milliseconds). No real millisecond timestamp will
+# exceed this for a couple more centuries, so anything larger can only be
+# microseconds.
+_MAX_PLAUSIBLE_MS = 4_102_444_800_000  # 2100-01-01T00:00:00Z
+
+
+def _normalize_ms(raw: pd.Series) -> pd.Series:
+    values = raw.astype("int64")
+    return values.where(values <= _MAX_PLAUSIBLE_MS, values // 1000)
+
+
 def _parse_klines_csv(raw: bytes) -> pd.DataFrame:
     df = pd.read_csv(io.BytesIO(raw), header=None, names=_KLINE_COLUMNS)
     # Binance dumps from ~2024 onward ship an actual header row inside the
@@ -128,7 +145,7 @@ def _to_candle_frame(df: pd.DataFrame, instrument_id: str, tf: str) -> pd.DataFr
         {
             "instrument_id": instrument_id,
             "tf": tf,
-            "ts": df["open_time"].astype("int64"),
+            "ts": _normalize_ms(df["open_time"]),
             "open": df["open"].astype(float),
             "high": df["high"].astype(float),
             "low": df["low"].astype(float),

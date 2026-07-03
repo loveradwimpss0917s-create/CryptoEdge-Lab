@@ -18,6 +18,7 @@ from cryptoedge_research.io import lake
 from cryptoedge_research.jobs.lake_sync import (
     BackfillTarget,
     _fetch_daily_klines,
+    _normalize_ms,
     _parse_klines_csv,
     _to_candle_frame,
     _zip_url,
@@ -78,6 +79,25 @@ def test_to_candle_frame_maps_columns_to_the_candles_schema():
     assert row["quote_volume"] == 5220000.5
     assert row["taker_buy_volume"] == 60.0  # taker_buy_base_asset_volume
     assert row["trades"] == 1000
+
+
+def test_normalize_ms_leaves_plausible_millisecond_values_alone():
+    assert list(_normalize_ms(pd.Series([1704067200000]))) == [1704067200000]
+
+
+def test_normalize_ms_divides_down_microsecond_scale_values():
+    # Binance's CSVs switched some symbols/dates to microsecond-precision
+    # open_time in 2025; a naive `.astype("int64")` treats that as
+    # milliseconds and blows up downstream date math (found live:
+    # ValueError: year 58469 is out of range).
+    assert list(_normalize_ms(pd.Series([1_704_067_200_000_000]))) == [1704067200000]
+
+
+def test_to_candle_frame_normalizes_microsecond_scale_open_time():
+    row = HEADERLESS_ROW.replace("1704067200000", "1704067200000000")
+    df = _parse_klines_csv(row.encode())
+    candles = _to_candle_frame(df, "BTCUSDT.BINANCE.PERP", "1h")
+    assert candles.iloc[0]["ts"] == 1704067200000
 
 
 def test_fetch_daily_klines_returns_none_on_404():
