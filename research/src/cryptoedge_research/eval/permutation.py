@@ -48,9 +48,19 @@ def permutation_test(
     """`forward_returns_bps[i]` is the return a trade would realize if it
     opened at bar i; `fires[i]` is whether the signal actually fired
     there. Block length is `horizon_bars * 3` per docs/05 §3.5.
+
+    The tail `horizon_bars` of `forward_returns_bps` is NaN (no future data
+    to compute a return from yet — see `forward_returns_series`). NaN
+    positions are excluded from both the observed EV and every null draw:
+    a caller feeding in `nan_to_num(..., nan=0.0)` would otherwise fabricate
+    fake zero-returns at the series tail, biasing both the observed
+    statistic and the null distribution it's compared against (2026-07
+    review finding H-2).
     """
     fires = np.asarray(fires, dtype=bool)
     forward_returns_bps = np.asarray(forward_returns_bps, dtype=float)
+    valid = ~np.isnan(forward_returns_bps)
+    fires = fires & valid
     if fires.sum() == 0:
         return PermutationResult(0.0, 1.0, n_iterations, 0.0, 0.0)
 
@@ -60,11 +70,14 @@ def permutation_test(
 
     null_evs = np.empty(n_iterations)
     for i in range(n_iterations):
-        shuffled_fires = _block_shuffle(fires, block_len, rng)
+        shuffled_fires = _block_shuffle(fires, block_len, rng) & valid
         selected = forward_returns_bps[shuffled_fires]
         null_evs[i] = selected.mean() if len(selected) > 0 else 0.0
 
-    p_value = float(np.mean(null_evs >= observed_ev))
+    # Add-one smoothing (docs/05 §3.5 review note): a raw p_value of 0.0
+    # after a finite number of permutations overstates significance — with
+    # n_iterations draws the true p can never be shown as exactly zero.
+    p_value = float((1 + np.sum(null_evs >= observed_ev)) / (n_iterations + 1))
     return PermutationResult(
         observed_ev_bps=observed_ev,
         p_value=p_value,

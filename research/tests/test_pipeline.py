@@ -12,9 +12,7 @@ from cryptoedge_research.eval.pipeline import EepConfig, run_eep
 
 BAR_MS = 3_600_000  # 1h bars
 WHEN = {"cmp": [{"feature": "flag"}, ">", 0.5]}
-FAST_CONFIG = EepConfig(
-    n_folds=5, purge_trades=1, permutation_iterations=300, bootstrap_iterations=500, seed=42
-)
+FAST_CONFIG = EepConfig(n_folds=5, permutation_iterations=300, bootstrap_iterations=500, seed=42)
 
 
 def _build_series(n: int, embed_effect_bps: float, seed: int) -> tuple[np.ndarray, np.ndarray, DslEvalInput]:
@@ -52,7 +50,6 @@ def _run(opens, closes, dsl_input, n_trials: int):
     )
     fires = compute_fires(WHEN, dsl_input)
     fwd = forward_returns_series(opens, closes, entry_delay_bars=1, horizon_bars=1, direction="long")
-    fwd = np.nan_to_num(fwd, nan=0.0)
     return run_eep(
         trades, fwd, fires, horizon_bars=1, regimes=dsl_input.regimes, n_trials=n_trials, config=FAST_CONFIG
     )

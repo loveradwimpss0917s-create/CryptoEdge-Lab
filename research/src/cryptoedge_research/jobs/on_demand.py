@@ -18,7 +18,6 @@ import sys
 import uuid
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from cryptoedge_research.dsl.evaluator import DslEvalInput, DslRegime, compute_fires
@@ -96,8 +95,11 @@ def run_eep_for_edge_version(
         entry_delay_bars=entry_delay_bars,
     )
     fires = compute_fires(signal_spec["when"], dsl_input)
+    # Tail bars have no future data to compute a return from yet and stay
+    # NaN; permutation_test excludes them from both the observed EV and the
+    # null draws rather than treating them as fake zero-returns (2026-07
+    # review finding H-2).
     fwd = forward_returns_series(opens, closes, entry_delay_bars, horizon_bars, direction)
-    fwd = np.nan_to_num(fwd, nan=0.0)
 
     return run_eep(trades, fwd, fires, horizon_bars, regime_series, n_trials, config or EepConfig())
 

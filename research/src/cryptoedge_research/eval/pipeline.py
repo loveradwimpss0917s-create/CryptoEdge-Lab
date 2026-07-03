@@ -35,13 +35,32 @@ PROTOCOL_VERSION = "1.0"
 @dataclass(frozen=True)
 class EepConfig:
     n_folds: int = 5
-    purge_trades: int = 1
+    # Walk-forward purge/embargo margin, in wall-clock ms (docs/05 §3.4;
+    # 2026-07 review finding H-3: this used to be `purge_trades`, a bar-count
+    # that didn't account for a trade's actual holding period).
+    embargo_ms: int = 5 * 86_400_000
     permutation_iterations: int = 1000
     bootstrap_iterations: int = 2000
     bootstrap_confidence: float = 0.95
     seed: int = 0
-    trades_per_year: float = 252.0
+    # None = derive from the actual trade timestamps (docs/05 §4: "シグナル
+    # ベース戦略は保有期間リターンから年率換算" — a fixed 252 assumed every
+    # Edge trades daily, which silently mis-annualizes Sharpe for anything
+    # higher/lower frequency; 2026-07 review finding H-1). Set explicitly
+    # only for tests wanting a deterministic annualization factor.
+    trades_per_year: float | None = None
     recent_years: int = 2
+
+
+_MIN_SPAN_YEARS = 1.0 / 365.0  # floor at one day, so a same-timestamp trade set can't blow up to infinity
+
+
+def _actual_trades_per_year(trades: list[Trade]) -> float:
+    if len(trades) < 2:
+        return 252.0  # arbitrary — sharpe_ratio() already returns 0 for <2 trades regardless
+    span_ms = max(t.entry_ts for t in trades) - min(t.entry_ts for t in trades)
+    span_years = max(span_ms / 86_400_000 / 365.0, _MIN_SPAN_YEARS)
+    return len(trades) / span_years
 
 
 @dataclass(frozen=True)
@@ -89,7 +108,12 @@ def run_eep(
             verdict=decide_verdict(empty_inputs, thresholds),
         )
 
-    overall = compute_bundle(net_returns, config.trades_per_year)
+    trades_per_year = (
+        config.trades_per_year if config.trades_per_year is not None else _actual_trades_per_year(trades)
+    )
+    metrics.append(MetricRow("overall", "trades_per_year", trades_per_year))
+
+    overall = compute_bundle(net_returns, trades_per_year)
     metrics += _bundle_rows("overall", overall)
     metrics.append(MetricRow("cost:zero", "ev_bps", ev_bps(gross_returns)))
 
@@ -98,13 +122,19 @@ def run_eep(
     # by the trade count; below that there simply isn't enough data for any
     # OOS split; docs/05 §5's n_eff>=30 ADOPT gate will reject such runs
     # anyway; this just keeps the pipeline from crashing on sparse Edges.
+    # `anchored_walk_forward_splits` can also raise if every trade shares the
+    # same entry_ts (zero time span to split) — equally "not enough data",
+    # so it's treated the same as too few trades.
     effective_n_folds = min(config.n_folds, len(net_returns) - 1)
     fold_evs: list[float] = []
     oos_idx: list[int] = []
     if effective_n_folds >= 1:
-        folds = anchored_walk_forward_splits(
-            len(net_returns), n_folds=effective_n_folds, horizon_bars=config.purge_trades, embargo_bars=0
-        )
+        try:
+            folds = anchored_walk_forward_splits(
+                trades, n_folds=effective_n_folds, embargo_ms=config.embargo_ms
+            )
+        except ValueError:
+            folds = []
         for fold in folds:
             test_returns = net_returns[fold.test_idx]
             fold_ev = ev_bps(test_returns)
@@ -117,7 +147,7 @@ def run_eep(
         sum(1 for e in fold_evs if e > 0) / len(fold_evs) if fold_evs else 0.0
     )
     oos_returns = net_returns[sorted(set(oos_idx))] if oos_idx else net_returns
-    wf_oos = compute_bundle(oos_returns, config.trades_per_year)
+    wf_oos = compute_bundle(oos_returns, trades_per_year)
     metrics += _bundle_rows("wf:oos", wf_oos)
     metrics.append(MetricRow("wf:oos", "fold_consistency", fold_consistency_value))
 
@@ -143,7 +173,7 @@ def run_eep(
     )
     sharpe_boot = bootstrap_ci(
         oos_returns,
-        lambda r: sharpe_ratio(r, config.trades_per_year),
+        lambda r: sharpe_ratio(r, trades_per_year),
         avg_block_len,
         config.bootstrap_iterations,
         config.bootstrap_confidence,
