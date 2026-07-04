@@ -84,6 +84,40 @@ class RegimeUpdateInput(BaseModel):
     model_version: str
 
 
+class FundingRateInput(BaseModel):
+    instrument_id: str
+    ts: int
+    rate: float
+    predicted_rate: float | None = None
+    mark_price: float | None = None
+
+
+class OpenInterestInput(BaseModel):
+    instrument_id: str
+    ts: int
+    oi_base: float
+    oi_usd: float | None = None
+
+
+class LongShortRatioInput(BaseModel):
+    instrument_id: str
+    ratio_type: str
+    ts: int
+    long_ratio: float
+    short_ratio: float
+    ls_ratio: float | None = None
+
+
+class LiquidationInput(BaseModel):
+    instrument_id: str
+    ts: int
+    long_liq_usd: float
+    short_liq_usd: float
+    events: int
+    max_single_usd: float | None = None
+    source_id: str
+
+
 class CorrelationUpdateInput(BaseModel):
     edge_a: str
     edge_b: str
@@ -198,6 +232,30 @@ class InternalApiClient:
 
     def submit_regimes(self, regimes: list[RegimeUpdateInput]) -> int:
         result = self._post("/internal/regimes", {"regimes": [r.model_dump(mode="json") for r in regimes]})
+        return result["written"]
+
+    def submit_funding_rates(self, funding_rates: list[FundingRateInput]) -> int:
+        result = self._post(
+            "/internal/funding-rates", {"funding_rates": [f.model_dump(mode="json") for f in funding_rates]}
+        )
+        return result["written"]
+
+    def submit_deriv_metrics(
+        self, open_interest: list[OpenInterestInput], long_short_ratios: list[LongShortRatioInput]
+    ) -> int:
+        result = self._post(
+            "/internal/deriv-metrics",
+            {
+                "open_interest": [o.model_dump(mode="json") for o in open_interest],
+                "long_short_ratios": [r.model_dump(mode="json") for r in long_short_ratios],
+            },
+        )
+        return result["written"]
+
+    def submit_liquidations(self, liquidations: list[LiquidationInput]) -> int:
+        result = self._post(
+            "/internal/liquidations", {"liquidations": [liq.model_dump(mode="json") for liq in liquidations]}
+        )
         return result["written"]
 
     def submit_correlations(self, correlations: list[CorrelationUpdateInput]) -> int:

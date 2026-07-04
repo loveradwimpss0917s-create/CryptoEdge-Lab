@@ -8,8 +8,11 @@ import {
   jobStatusUpdateSchema,
   startRunRequestSchema,
   submitCorrelationsRequestSchema,
+  submitDerivMetricsRequestSchema,
   submitFeatureDefsRequestSchema,
   submitFindingsRequestSchema,
+  submitFundingRatesRequestSchema,
+  submitLiquidationsRequestSchema,
   submitMetricsRequestSchema,
   submitRegimesRequestSchema,
   submitVerdictRequestSchema
@@ -324,6 +327,84 @@ internalRoute.post("/regimes", async (c) => {
     )
   );
   return c.json({ written: body.regimes.length }, 201);
+});
+
+// Historical funding-rate backfill (docs/03 §2.1/§5, 2026-07 design audit
+// TASK-3): data.binance.vision's monthly fundingRate archives, not the live
+// OKX-fed trickle these tables otherwise get.
+internalRoute.post("/funding-rates", async (c) => {
+  const body = submitFundingRatesRequestSchema.parse(await c.req.json());
+  const stmt = c.env.DB.prepare(
+    `INSERT INTO funding_rates (instrument_id, ts, rate, predicted_rate, mark_price, ingested_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+     ON CONFLICT (instrument_id, ts) DO UPDATE SET
+       rate = excluded.rate, predicted_rate = excluded.predicted_rate, mark_price = excluded.mark_price`
+  );
+  const now = Date.now();
+  await c.env.DB.batch(
+    body.funding_rates.map((f) =>
+      stmt.bind(f.instrument_id, f.ts, f.rate, f.predicted_rate ?? null, f.mark_price ?? null, now)
+    )
+  );
+  return c.json({ written: body.funding_rates.length }, 201);
+});
+
+// Historical open-interest + long/short-ratio backfill (docs/03 §2.2,
+// 2026-07 design audit TASK-3): both come from the same
+// data.binance.vision "metrics" daily archive, so one endpoint upserts both
+// tables per research-worker call.
+internalRoute.post("/deriv-metrics", async (c) => {
+  const body = submitDerivMetricsRequestSchema.parse(await c.req.json());
+  const oiStmt = c.env.DB.prepare(
+    `INSERT INTO open_interest (instrument_id, ts, oi_base, oi_usd, ingested_at)
+     VALUES (?1, ?2, ?3, ?4, ?5)
+     ON CONFLICT (instrument_id, ts) DO UPDATE SET
+       oi_base = excluded.oi_base, oi_usd = excluded.oi_usd`
+  );
+  const lsStmt = c.env.DB.prepare(
+    `INSERT INTO long_short_ratios (instrument_id, ratio_type, ts, long_ratio, short_ratio, ls_ratio, ingested_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT (instrument_id, ratio_type, ts) DO UPDATE SET
+       long_ratio = excluded.long_ratio, short_ratio = excluded.short_ratio, ls_ratio = excluded.ls_ratio`
+  );
+  const now = Date.now();
+  await c.env.DB.batch([
+    ...body.open_interest.map((o) => oiStmt.bind(o.instrument_id, o.ts, o.oi_base, o.oi_usd ?? null, now)),
+    ...body.long_short_ratios.map((r) =>
+      lsStmt.bind(r.instrument_id, r.ratio_type, r.ts, r.long_ratio, r.short_ratio, r.ls_ratio ?? null, now)
+    )
+  ]);
+  return c.json({ written: body.open_interest.length + body.long_short_ratios.length }, 201);
+});
+
+// Historical liquidation backfill (docs/03 §2.2, 2026-07 design audit
+// TASK-3): data.binance.vision's daily liquidationSnapshot archives,
+// aggregated into 5m buckets by research-worker before upserting.
+internalRoute.post("/liquidations", async (c) => {
+  const body = submitLiquidationsRequestSchema.parse(await c.req.json());
+  const stmt = c.env.DB.prepare(
+    `INSERT INTO liquidations_5m (instrument_id, ts, long_liq_usd, short_liq_usd, events, max_single_usd, source_id, ingested_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+     ON CONFLICT (instrument_id, ts, source_id) DO UPDATE SET
+       long_liq_usd = excluded.long_liq_usd, short_liq_usd = excluded.short_liq_usd,
+       events = excluded.events, max_single_usd = excluded.max_single_usd`
+  );
+  const now = Date.now();
+  await c.env.DB.batch(
+    body.liquidations.map((l) =>
+      stmt.bind(
+        l.instrument_id,
+        l.ts,
+        l.long_liq_usd,
+        l.short_liq_usd,
+        l.events,
+        l.max_single_usd ?? null,
+        l.source_id,
+        now
+      )
+    )
+  );
+  return c.json({ written: body.liquidations.length }, 201);
 });
 
 internalRoute.post("/correlations", async (c) => {

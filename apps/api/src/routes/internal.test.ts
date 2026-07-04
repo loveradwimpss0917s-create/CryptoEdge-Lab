@@ -137,6 +137,118 @@ describe("POST /internal/feature-defs (2026-07 review, TASK-2)", () => {
   });
 });
 
+describe("POST /internal/funding-rates (2026-07 review, TASK-3)", () => {
+  it("upserts funding_rates and is idempotent on re-submission", async () => {
+    const res = await internalRoute.request(
+      "/funding-rates",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          funding_rates: [
+            { instrument_id: "BTCUSDT.BINANCE.PERP", ts: 1000, rate: 0.0001, predicted_rate: null, mark_price: null }
+          ]
+        })
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { written: number }).written).toBe(1);
+
+    const res2 = await internalRoute.request(
+      "/funding-rates",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          funding_rates: [{ instrument_id: "BTCUSDT.BINANCE.PERP", ts: 1000, rate: 0.0002 }]
+        })
+      },
+      env
+    );
+    expect(res2.status).toBe(201);
+    const row = await env.DB.prepare(
+      `SELECT rate FROM funding_rates WHERE instrument_id = 'BTCUSDT.BINANCE.PERP' AND ts = 1000`
+    ).first<{ rate: number }>();
+    expect(row!.rate).toBe(0.0002);
+  });
+});
+
+describe("POST /internal/deriv-metrics (2026-07 review, TASK-3)", () => {
+  it("upserts both open_interest and long_short_ratios from one payload", async () => {
+    const res = await internalRoute.request(
+      "/deriv-metrics",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          open_interest: [{ instrument_id: "BTCUSDT.BINANCE.PERP", ts: 1000, oi_base: 12345.0 }],
+          long_short_ratios: [
+            {
+              instrument_id: "BTCUSDT.BINANCE.PERP",
+              ratio_type: "all_account",
+              ts: 1000,
+              long_ratio: 0.6,
+              short_ratio: 0.4,
+              ls_ratio: 1.5
+            }
+          ]
+        })
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { written: number }).written).toBe(2);
+
+    const oi = await env.DB.prepare(`SELECT oi_base FROM open_interest WHERE ts = 1000`).first<{ oi_base: number }>();
+    expect(oi!.oi_base).toBe(12345.0);
+    const ls = await env.DB.prepare(`SELECT ls_ratio FROM long_short_ratios WHERE ts = 1000`).first<{
+      ls_ratio: number;
+    }>();
+    expect(ls!.ls_ratio).toBe(1.5);
+  });
+
+  it("accepts a payload with only one of the two arrays populated", async () => {
+    const res = await internalRoute.request(
+      "/deriv-metrics",
+      { method: "POST", body: JSON.stringify({ open_interest: [], long_short_ratios: [] }) },
+      env
+    );
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { written: number }).written).toBe(0);
+  });
+});
+
+describe("POST /internal/liquidations (2026-07 review, TASK-3)", () => {
+  it("upserts liquidations_5m keyed by (instrument_id, ts, source_id)", async () => {
+    const res = await internalRoute.request(
+      "/liquidations",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          liquidations: [
+            {
+              instrument_id: "BTCUSDT.BINANCE.PERP",
+              ts: 1000,
+              long_liq_usd: 5000.0,
+              short_liq_usd: 0,
+              events: 3,
+              max_single_usd: 2000.0,
+              source_id: "binance_data_vision"
+            }
+          ]
+        })
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { written: number }).written).toBe(1);
+
+    const row = await env.DB.prepare(
+      `SELECT long_liq_usd, events FROM liquidations_5m WHERE ts = 1000 AND source_id = 'binance_data_vision'`
+    ).first<{ long_liq_usd: number; events: number }>();
+    expect(row!.long_liq_usd).toBe(5000.0);
+    expect(row!.events).toBe(3);
+  });
+});
+
 describe("GET /internal/edges/:id/trial-count", () => {
   it("returns 0 for an edge with no runs yet", async () => {
     const res = await internalRoute.request("/edges/e1/trial-count", {}, env);

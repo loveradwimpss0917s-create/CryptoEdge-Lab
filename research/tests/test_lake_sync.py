@@ -187,7 +187,13 @@ def test_sync_d1_curated_pages_through_and_writes_parquet(tmp_path):
             return [r for r in source if r["_rowid"] > after_rowid][:limit]
 
     written = sync_d1_curated(_FakeClient())
-    assert written == {"metrics": 3, "open_interest": 0}
+    assert written == {
+        "metrics": 3,
+        "open_interest": 0,
+        "funding_rates": 0,
+        "long_short_ratios": 0,
+        "liquidations_5m": 0,
+    }
     df = pd.read_parquet(tmp_path / "curated" / "market" / "metrics" / "data.parquet")
     assert "_rowid" not in df.columns
     assert len(df) == 3

@@ -147,6 +147,69 @@ export const submitCorrelationsRequestSchema = z.object({
 });
 export type SubmitCorrelationsRequest = z.infer<typeof submitCorrelationsRequestSchema>;
 
+// Derivatives backfill (docs/03 §2.1/§5, 2026-07 design audit TASK-3):
+// research-worker backfills funding/OI/long-short-ratio history from
+// data.binance.vision's static archives (candles' existing source, unlike
+// the live OKX-fed trickle these tables otherwise get) and upserts it here.
+export const fundingRateInputSchema = z.object({
+  instrument_id: z.string().min(1),
+  ts: z.number().int(),
+  rate: z.number(),
+  // .nullable(): same Pydantic-null-vs-omitted pattern as every other
+  // Optional field on this page.
+  predicted_rate: z.number().nullable().optional(),
+  mark_price: z.number().nullable().optional()
+});
+export type FundingRateInput = z.infer<typeof fundingRateInputSchema>;
+
+export const submitFundingRatesRequestSchema = z.object({
+  funding_rates: z.array(fundingRateInputSchema).min(1)
+});
+export type SubmitFundingRatesRequest = z.infer<typeof submitFundingRatesRequestSchema>;
+
+export const openInterestInputSchema = z.object({
+  instrument_id: z.string().min(1),
+  ts: z.number().int(),
+  oi_base: z.number(),
+  oi_usd: z.number().nullable().optional()
+});
+export type OpenInterestInput = z.infer<typeof openInterestInputSchema>;
+
+export const longShortRatioInputSchema = z.object({
+  instrument_id: z.string().min(1),
+  ratio_type: z.string().min(1),
+  ts: z.number().int(),
+  long_ratio: z.number(),
+  short_ratio: z.number(),
+  ls_ratio: z.number().nullable().optional()
+});
+export type LongShortRatioInput = z.infer<typeof longShortRatioInputSchema>;
+
+// Both arrays come from the same data.binance.vision "metrics" daily file
+// (docs/03 §2.2), so one endpoint upserts both tables in a single batch
+// rather than forcing research-worker to make two round trips per day.
+export const submitDerivMetricsRequestSchema = z.object({
+  open_interest: z.array(openInterestInputSchema).default([]),
+  long_short_ratios: z.array(longShortRatioInputSchema).default([])
+});
+export type SubmitDerivMetricsRequest = z.infer<typeof submitDerivMetricsRequestSchema>;
+
+export const liquidationInputSchema = z.object({
+  instrument_id: z.string().min(1),
+  ts: z.number().int(),
+  long_liq_usd: z.number(),
+  short_liq_usd: z.number(),
+  events: z.number().int(),
+  max_single_usd: z.number().nullable().optional(),
+  source_id: z.string().min(1)
+});
+export type LiquidationInput = z.infer<typeof liquidationInputSchema>;
+
+export const submitLiquidationsRequestSchema = z.object({
+  liquidations: z.array(liquidationInputSchema).min(1)
+});
+export type SubmitLiquidationsRequest = z.infer<typeof submitLiquidationsRequestSchema>;
+
 export const briefingReadyRequestSchema = z.object({
   ref_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   summary: z.record(z.string(), z.unknown())

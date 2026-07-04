@@ -69,7 +69,7 @@ _KLINE_COLUMNS = [
     "number_of_trades",
     "taker_buy_base_asset_volume",
     "taker_buy_quote_asset_volume",
-    "ignore"
+    "ignore",
 ]
 
 
@@ -86,7 +86,7 @@ class BackfillTarget:
 BACKFILL_TARGETS = [
     BackfillTarget("BTCUSDT.BINANCE.PERP", "BTCUSDT", "futures/um"),
     BackfillTarget("BTCUSDT.BINANCE.SPOT", "BTCUSDT", "spot"),
-    BackfillTarget("ETHUSDT.BINANCE.PERP", "ETHUSDT", "futures/um")
+    BackfillTarget("ETHUSDT.BINANCE.PERP", "ETHUSDT", "futures/um"),
 ]
 
 BACKFILL_TIMEFRAMES = ("1m", "1h", "1d")
@@ -95,14 +95,14 @@ BACKFILL_TIMEFRAMES = ("1m", "1h", "1d")
 # harmless 404s before the real start, so precision isn't critical here.
 _DEFAULT_START_DATE = {
     "spot": {"1m": "2020-01-01", "1h": "2017-08-17", "1d": "2017-08-17"},
-    "futures/um": {"1m": "2020-01-01", "1h": "2019-09-08", "1d": "2019-09-08"}
+    "futures/um": {"1m": "2020-01-01", "1h": "2019-09-08", "1d": "2019-09-08"},
 }
 
 # docs/01 §4.1 "バックフィルは 80K 行/日以下にスロットリング": 1m bars are
 # 1,440 rows/day, so its per-run day budget is much smaller than 1h/1d's.
 _MAX_DAYS_PER_RUN = {"1m": 30, "1h": 365, "1d": 3650}
 
-D1_CURATED_TABLES = ("metrics", "open_interest")
+D1_CURATED_TABLES = ("metrics", "open_interest", "funding_rates", "long_short_ratios", "liquidations_5m")
 
 
 def _zip_url(market_path: str, symbol: str, tf: str, date: datetime.date) -> str:
@@ -153,7 +153,7 @@ def _to_candle_frame(df: pd.DataFrame, instrument_id: str, tf: str) -> pd.DataFr
             "volume": df["volume"].astype(float),
             "quote_volume": df["quote_asset_volume"].astype(float),
             "taker_buy_volume": df["taker_buy_base_asset_volume"].astype(float),
-            "trades": df["number_of_trades"].astype("int64")
+            "trades": df["number_of_trades"].astype("int64"),
         }
     )
 
@@ -293,13 +293,29 @@ def main() -> int:
         "R2 endpoint diagnostic: length=%d has_leading_or_trailing_whitespace=%s starts_with_https=%s",
         len(raw_endpoint),
         raw_endpoint != raw_endpoint.strip(),
-        raw_endpoint.strip().startswith("https://")
+        raw_endpoint.strip().startswith("https://"),
     )
+
+    # Deferred import: jobs.deriv_sync imports BACKFILL_TARGETS/BackfillTarget
+    # from this module, so importing it at module scope here would be
+    # circular (2026-07 design audit TASK-3).
+    from cryptoedge_research.jobs import deriv_sync
 
     with httpx.Client(timeout=30.0) as http, InternalApiClient(base_url, token) as client:
         for target in BACKFILL_TARGETS:
             for tf in BACKFILL_TIMEFRAMES:
                 backfill_candles_for_target(http, target, tf)
+
+        # docs/03 §2.1-2.2/§5, 2026-07 design audit TASK-3: funding/OI/
+        # long-short-ratio/liquidation history, futures/um only (spot has
+        # none of these). Runs before sync_d1_curated below so this run's
+        # writes are mirrored to R2 immediately, giving deriv_sync's own
+        # watermark lookup fresh state on the *next* run.
+        for target in deriv_sync.FUTURES_TARGETS:
+            deriv_sync.backfill_funding_for_target(http, client, target)
+            deriv_sync.backfill_deriv_metrics_for_target(http, client, target)
+            deriv_sync.backfill_liquidations_for_target(http, client, target)
+
         sync_d1_curated(client)
 
         # docs/04 §6, 2026-07 review Task 4: nightly.py only ever classifies

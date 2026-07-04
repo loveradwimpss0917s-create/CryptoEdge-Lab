@@ -84,6 +84,9 @@
 | POST `/internal/findings` | discovery_findings バルク投入 |
 | POST `/internal/regimes` | regimes_daily 更新 |
 | POST `/internal/feature-defs` | feature_defs 台帳更新 (実値は R2、docs/04 §3.1、2026-07 レビュー TASK-2 Feature Store v1) |
+| POST `/internal/funding-rates` | funding_rates バルク upsert (data.binance.vision 月次アーカイブからの履歴バックフィル、2026-07 レビュー TASK-3) |
+| POST `/internal/deriv-metrics` | open_interest + long_short_ratios バルク upsert (data.binance.vision 日次 `metrics` アーカイブ由来、同一ファイルから両テーブルへ、2026-07 レビュー TASK-3) |
+| POST `/internal/liquidations` | liquidations_5m バルク upsert (data.binance.vision 日次 `liquidationSnapshot` アーカイブを 5m バケット集計、2026-07 レビュー TASK-3) |
 | POST `/internal/correlations` | edge_correlations 更新 |
 | POST `/internal/briefing-ready` | nightly 完了通知 → AI ブリーフィング生成をトリガ |
 

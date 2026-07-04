@@ -92,6 +92,13 @@ def test_rolling_ratio_of_equal_series_is_one():
     assert result.iloc[-1] == pytest.approx(1.0)
 
 
+def test_rolling_sum_matches_manual_calculation():
+    s = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0])
+    result = ops.rolling_sum(s, 3)
+    assert result.iloc[-1] == pytest.approx(3.0 + 4.0 + 5.0)
+    assert np.isnan(result.iloc[1])  # window not yet full
+
+
 @pytest.mark.parametrize(
     "fn,kwargs",
     [
@@ -105,6 +112,10 @@ def test_rolling_ratio_of_equal_series_is_one():
                 "close": pd.Series(np.random.default_rng(6).normal(100, 5, size=50).cumsum() + 100),
                 "window": 10,
             },
+        ),
+        (
+            ops.rolling_sum,
+            {"series": pd.Series(np.random.default_rng(10).uniform(0, 100, size=50)), "window": 5},
         ),
     ],
 )

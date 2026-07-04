@@ -77,3 +77,7 @@ def rolling_ratio(numerator: pd.Series, denominator: pd.Series, window: int) -> 
     num_sum = numerator.rolling(window, min_periods=window).sum()
     den_sum = denominator.rolling(window, min_periods=window).sum()
     return num_sum / den_sum
+
+
+def rolling_sum(series: pd.Series, window: int) -> pd.Series:
+    return series.rolling(window, min_periods=window).sum()
