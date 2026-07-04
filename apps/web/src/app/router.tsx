@@ -3,6 +3,7 @@ import { Layout } from "./Layout";
 import { TodayScreen } from "../screens/today/TodayScreen";
 import { EdgeBoardScreen } from "../screens/edge-board/EdgeBoardScreen";
 import { EdgeDetailScreen } from "../screens/edge-detail/EdgeDetailScreen";
+import { DataHealthScreen } from "../screens/data-health/DataHealthScreen";
 
 const rootRoute = createRootRoute({ component: Layout });
 
@@ -34,7 +35,13 @@ const edgeDetailRoute = createRoute({
   component: EdgeDetailScreen
 });
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, edgeDetailRoute]);
+const dataHealthRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/data-health",
+  component: DataHealthScreen
+});
+
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, edgeDetailRoute, dataHealthRoute]);
 
 export const router = createRouter({ routeTree });
 

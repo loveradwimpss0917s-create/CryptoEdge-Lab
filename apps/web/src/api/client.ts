@@ -136,6 +136,40 @@ export interface QuotaOverview {
   quota: QuotaRow[];
 }
 
+// Data Health (docs/06 SCR-05, docs/15 SONNET-4 V1 slice).
+export interface StreamHealth {
+  stream_id: string;
+  source_id: string;
+  last_status: string | null;
+  last_run_at: number | null;
+  watermark_ts: number;
+  consecutive_errors: number;
+  quality_score: number;
+  open_issues: { critical: number; warn: number; info: number };
+}
+
+export interface SourceHealth {
+  source_id: string;
+  name: string;
+  status: string;
+  streams: StreamHealth[];
+}
+
+export interface OpenDqIssue {
+  issue_id: number;
+  stream_id: string;
+  rule_id: string;
+  severity: string;
+  detected_at: number;
+  detail: string | null;
+}
+
+export interface DataHealth {
+  overall_quality_score: number | null;
+  sources: SourceHealth[];
+  open_issues: OpenDqIssue[];
+}
+
 // Research Pack (docs/07 §2-4, docs/15 SONNET-2 V1 slice): daily_briefing
 // only for now. `kind` matches the ai_outputs.kind enum ("briefing", not
 // docs/07's `pack_kind` name "daily_briefing" -- the DB enum predates and
@@ -172,6 +206,7 @@ export const api = {
   quotaOverview: () => request<QuotaOverview>("/ops/quota"),
   readinessSummary: () => request<ReadinessSummary>("/edges/readiness-summary"),
   getLatestPack: (kind: string) => request<PackContent>(`/packs/${kind}/latest`),
+  dataHealth: () => request<DataHealth>("/data-health"),
   createEdge: (body: CreateEdgeRequest) =>
     request<{ edge_id: string; slug: string; status: string }>("/edges", {
       method: "POST",

@@ -44,12 +44,23 @@
 
 ### Data Health
 
+**実装状況 (docs/15 SONNET-4, 2026-07)**: 下表の `/health/*` 4本の代わりに `GET /data-health` 1本を
+実装した V1 スライス — ソース×ストリームの品質スコア格子と open issues 一覧を1回の呼び出しで返す
+(SCR-05 のグリッド表示に必要なのはこの2つだけで、UI側で複数エンドポイントを組み合わせる理由がない)。
+品質スコアは docs/03 §6 が定義する「直近30日の取得成功率×欠損なし率」の**近似**——
+`ingest_state` は現在の状態1行のみを保持し過去の実行履歴を持たないため、真の30日ローリング値は
+計算できない (履歴テーブル追加は将来課題)。代わりに `ingest_state` の
+`consecutive_errors`/`last_status`/`watermark_ts` から Readiness (services/readiness.ts) と同じ
+「保存せずリード時に都度計算する」方式で近似スコアを出す。`/health/refill`・`/health/sources` PATCH
+(手動リフィル・ソース無効化) は新規ミューテーションが必要なため未実装のまま。
+
 | Method Path | 説明 |
 |---|---|
-| GET `/health/streams` | ingest_state + 品質スコア格子 |
-| GET `/health/issues?status=` / POST `/health/issues/{id}/ack` | DQ issues |
-| POST `/health/refill` | 手動リフィル (body: stream_id, from, to) → jobs |
-| GET `/health/sources` / PATCH `/health/sources/{id}` | ソース有効/無効 |
+| GET `/data-health` | **実装済み**: `{overall_quality_score, sources: [{source_id, name, status, streams: [{stream_id, quality_score, consecutive_errors, open_issues, ...}]}], open_issues: [...]}` (docs/15 SONNET-4) |
+| GET `/health/streams` | (未実装、`/data-health` の `sources[].streams` で代替) ingest_state + 品質スコア格子 |
+| GET `/health/issues?status=` / POST `/health/issues/{id}/ack` | (未実装、一覧は `/data-health` の `open_issues` で代替。ack は未実装) DQ issues |
+| POST `/health/refill` | (未実装) 手動リフィル (body: stream_id, from, to) → jobs |
+| GET `/health/sources` / PATCH `/health/sources/{id}` | (未実装) ソース有効/無効 |
 | GET `/ops/quota` | 当日の `quota_usage` (resource, value, budget, usage_ratio)。Today 画面の使用率バーの元 (2026-07 レビュー Task 7) |
 
 ### Reports / Research Pack (AI ハンドオフ) / Jobs / Settings

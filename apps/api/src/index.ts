@@ -10,6 +10,7 @@ import type { Env } from "./env.js";
 import { requireAccess, type AccessVariables } from "./middleware/require-access.js";
 import { requireInternalToken } from "./middleware/require-internal-token.js";
 import { problemDetailsErrorHandler } from "./middleware/error.js";
+import { dataHealthRoute } from "./routes/data-health.js";
 import { edgesRoute } from "./routes/edges.js";
 import { marketRoute } from "./routes/market.js";
 import { opsRoute } from "./routes/ops.js";
@@ -27,6 +28,7 @@ app.route("/api/v1/edges", edgesRoute);
 app.route("/api/v1/market", marketRoute);
 app.route("/api/v1/ops", opsRoute);
 app.route("/api/v1/packs", packsRoute);
+app.route("/api/v1/data-health", dataHealthRoute);
 
 app.use("/internal/*", requireInternalToken);
 app.route("/internal", internalRoute);
