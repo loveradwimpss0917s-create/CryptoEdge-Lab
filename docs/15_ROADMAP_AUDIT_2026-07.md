@@ -187,7 +187,10 @@ V1 完了後に、SONNET-1/6 で解除される DATA 待ちの状況と合わせ
   **liquidations_5m は HTTP 400** — OKX の `liquidation-orders` は `instType=SWAP` に対して `instId` フィルタを受け付けず `instFamily` が必要と判明 (本番実データで発見)。`fe89c05` で修正・デプロイ
 - 2回目の tick-1h (14:15 UTC) で HTTP 400 は解消したが `group.details is not iterable` で新規失敗 —
   同一 instFamily 内で当該インスツルメントの約定が無いグループは `details` を省略して返すことが判明。
-  `3b258f7` で修正・デプロイ済み。次回 tick-1h (15:15 UTC以降) で再検証要
+  `3b258f7` で修正・デプロイ済み
+- 3回目の tick-1h (15:15 UTC) で **正式に成功を確認**: `liquidations_5m` 157行書き込み、
+  `ingest_state.last_status='ok'` (両インスツルメント)。`long_short_ratios` も継続して正常。
+  **SONNET-1 完全完了**
 
 ### SONNET-2 (完了): Research Pack V1 slice
 
