@@ -15,7 +15,10 @@ import {
 } from "./adapters/okx.js";
 import { alternativeMeFearGreedAdapter } from "./adapters/alternative-me.js";
 import { deribitDvolAdapter } from "./adapters/deribit.js";
+import { econCalendarAdapter } from "./adapters/econ-calendar.js";
+import { etherscanUsdtMintAdapter } from "./adapters/etherscan.js";
 import type { Adapter } from "./adapters/types.js";
+import { yahooCmeGapAdapter } from "./adapters/yahoo-finance.js";
 
 const futuresInstruments = TRACKED_INSTRUMENTS.filter((i) => i.isFutures);
 
@@ -46,12 +49,20 @@ export const STREAMS_1H: Adapter[] = [
 // (DQ digest + research dispatch) run in research-worker's daily-light job
 // (docs/01 §3.2) once G1 has landed in D1/R2.
 export const STREAMS_1D: Adapter[] = [
-  alternativeMeFearGreedAdapter
+  alternativeMeFearGreedAdapter,
+  // Event Engine v1 (docs/04 §5, 2026-07 design audit TASK-4): the first
+  // three `events` writers. econCalendarAdapter's ECON_CALENDAR ships
+  // empty (see its module docstring) until populated with verified
+  // FOMC/CPI/NFP/PPI dates from official sources, so it's a no-op write
+  // until then, not a placeholder to remove.
+  yahooCmeGapAdapter,
+  etherscanUsdtMintAdapter,
+  econCalendarAdapter
   // TODO (docs/03 §2.3-2.5): coinmetrics_community (~40 series), defillama
   // (stablecoin mcap, DEX volumes), fred (DXY/M2/VIX/T10Y2Y — requires
-  // FRED_API_KEY), farside_etf (HTML scrape), etherscan/tronscan (USDT
-  // Treasury mint/burn -> events table), yahoo_finance (BTC=F for the
-  // CME-gap seed edge), econ_calendar (FOMC/CPI/NFP -> events table).
+  // FRED_API_KEY), farside_etf (HTML scrape), tronscan (USDT Treasury
+  // mint/burn on Tron, redundant with etherscanUsdtMintAdapter's Ethereum
+  // coverage).
 ];
 
 // ---- tick-weekly: fires Sunday 03:00 UTC ---------------------------------

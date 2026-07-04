@@ -3,6 +3,7 @@
 // rows/day) stays centralized instead of scattered across adapters.
 
 import type { CandleRow } from "@cryptoedge/schema";
+import { newId } from "@cryptoedge/shared";
 import type { Env } from "./env.js";
 
 export const BACKOFF_STEPS_MS = [5 * 60_000, 15 * 60_000, 60 * 60_000, 6 * 60 * 60_000, 24 * 60 * 60_000];
@@ -125,6 +126,48 @@ export async function upsertMetric(
     .bind(metricId, ts, ingestedAt, value, meta ? JSON.stringify(meta) : null)
     .run();
   await recordWrites(env, "d1_writes", 1);
+}
+
+export interface EventInput {
+  eventType: string;
+  ts: number;
+  announcedAt?: number;
+  magnitude?: number;
+  payload?: unknown;
+  sourceId: string;
+  /** Uniquely identifies this occurrence for a given event_type/source
+   * (e.g. the CME-gap trading day, or the mint tx hash) so a re-run that
+   * re-detects the same event is a no-op, not a duplicate row (docs/02
+   * events.dedupe_key UNIQUE, docs/03 §6 DQ-05). */
+  dedupeKey: string;
+}
+
+/** The Event Engine's write path (docs/04 §5, 2026-07 design audit
+ * TASK-4): every adapter that detects a discrete event (cme_gap,
+ * usdt_mint, econ_calendar entries, ...) goes through this, not a
+ * hand-rolled INSERT, so dedupe/id-generation stays consistent. Returns
+ * `true` if a new row was written, `false` if `dedupeKey` already existed
+ * (DO NOTHING on conflict — events are immutable once recorded). */
+export async function upsertEvent(env: Env, event: EventInput): Promise<boolean> {
+  const result = await env.DB.prepare(
+    `INSERT INTO events (event_id, event_type, ts, announced_at, magnitude, payload, source_id, dedupe_key)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+     ON CONFLICT (dedupe_key) DO NOTHING`
+  )
+    .bind(
+      newId(),
+      event.eventType,
+      event.ts,
+      event.announcedAt ?? null,
+      event.magnitude ?? null,
+      event.payload ? JSON.stringify(event.payload) : null,
+      event.sourceId,
+      event.dedupeKey
+    )
+    .run();
+  const written = (result.meta.changes ?? 0) > 0;
+  if (written) await recordWrites(env, "d1_writes", 1);
+  return written;
 }
 
 export async function touchIngestState(
