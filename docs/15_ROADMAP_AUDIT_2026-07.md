@@ -177,7 +177,12 @@ docs/14 (Edge Pack v1) のフェーズ計画との接続も明記する。
   実装済み) の SCREEN_DONE/FULL_DONE を項目源にする方が実データと一致する
 - Portfolio Pulse は未実装のまま据え置き (paper_signals 母数が少ないうちは無意味、docs/09 P2の
   相関/ポートフォリオ機能と合わせて実装する想定)
-- typecheck/test/lint 全緑 (api 73テスト)、本番デプロイ成功確認要
+- typecheck/test/lint 全緑 (api 73テスト)、**本番デプロイ成功確認済み** (`cfea22a`)。本番D1の
+  読み取り確認: SCREEN_DONE/FULL_DONE 相当の run が実在 (utc-2123-drift の full×2、
+  funding-rate-mean-reversion の full×1 等) しており Action Queue に実データが乗ることを確認。
+  ただし open DQ critical issue 10件は okx_rest 移行前の廃止済みストリーム (binance_rest/coingecko)
+  の古い issue で、実質ノイズ — dq_issues の解決フロー (`status='resolved'`遷移) がまだ無いための
+  副作用であり、SONNET-7のスコープ外の別課題として記録のみ
 
 ### SONNET-8 (P1): Explorer 最小版 (DuckDB-WASM)
 
