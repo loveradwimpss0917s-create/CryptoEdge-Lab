@@ -10,9 +10,13 @@ export const runMetricInputSchema = z.object({
   segment: z.string().min(1),
   metric: z.string().min(1),
   value: z.number(),
-  ci_lo: z.number().optional(),
-  ci_hi: z.number().optional(),
-  meta: z.record(z.string(), z.unknown()).optional()
+  // .nullable(): same Pydantic-always-sends-null-not-omitted issue as
+  // regimeUpdateInputSchema below (found live: the first on-demand eval run
+  // reached this endpoint and failed HTTP 400 "Expected number, received
+  // null" for ci_lo/ci_hi/meta).
+  ci_lo: z.number().nullable().optional(),
+  ci_hi: z.number().nullable().optional(),
+  meta: z.record(z.string(), z.unknown()).nullable().optional()
 });
 export type RunMetricInput = z.infer<typeof runMetricInputSchema>;
 
@@ -36,7 +40,13 @@ export type SubmitMetricsRequest = z.infer<typeof submitMetricsRequestSchema>;
 
 export const verdictReasonSchema = z.object({
   check: z.string().min(1),
-  pass: z.boolean(),
+  // Field name must be "passed", not "pass": the Python client's
+  // VerdictReason model (io/internal_client.py) and every consumer
+  // (edges.ts's response shape, the web UI's reason.passed) already agree
+  // on "passed" — "pass" here was a typo that meant this endpoint could
+  // never have accepted a real submission (found live: the first on-demand
+  // eval run reached submit_verdict and failed HTTP 400 "pass: Required").
+  passed: z.boolean(),
   value: z.number().nullable(),
   threshold: z.number().nullable()
 });
@@ -44,7 +54,7 @@ export type VerdictReason = z.infer<typeof verdictReasonSchema>;
 
 export const submitVerdictRequestSchema = z.object({
   verdict: z.enum(["ADOPT", "WATCH", "REJECT"]),
-  score: z.number().min(0).max(100).optional(),
+  score: z.number().min(0).max(100).nullable().optional(),
   reasons: z.array(verdictReasonSchema).min(1),
   thresholds_version: z.string().min(1)
 });
@@ -71,7 +81,10 @@ export const discoveryFindingInputSchema = z.object({
   spec: z.record(z.string(), z.unknown()),
   stats: z.record(z.string(), z.unknown()),
   fdr_q: z.number().min(0).max(1),
-  novelty: z.number().min(0).max(1).optional()
+  // .nullable(): same Pydantic-null-vs-omitted issue as the other Optional
+  // fields on this page (unused today, but built via the same
+  // model_dump(mode="json") pattern that hits it as soon as it's wired up).
+  novelty: z.number().min(0).max(1).nullable().optional()
 });
 export type DiscoveryFindingInput = z.infer<typeof discoveryFindingInputSchema>;
 

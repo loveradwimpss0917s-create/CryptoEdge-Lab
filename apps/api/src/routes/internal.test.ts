@@ -183,6 +183,80 @@ describe("POST /internal/regimes (2026-07: null vs. omitted hmm_state/probs)", (
   });
 });
 
+describe("POST /internal/runs/:id/metrics (2026-07: null vs. omitted ci_lo/ci_hi/meta)", () => {
+  it("accepts an explicit null for ci_lo/ci_hi/meta, not just an omitted key", async () => {
+    // Same Pydantic-always-sends-null issue as /regimes: the first live
+    // on-demand eval run's metrics had no confidence interval and got a
+    // 400 "Expected number, received null" until this schema learned to
+    // accept null too.
+    await env.DB.prepare(
+      `INSERT INTO edges (edge_id, slug, title, category, status, hypothesis, rationale, origin, created_at, updated_at)
+       VALUES ('e1', 'slug', 'Title', 'microstructure', 'CANDIDATE', 'h', 'r', 'manual', 1, 1)`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO edge_versions (version_id, edge_id, semver, signal_spec, params, instrument_id, direction, horizon, cost_model, created_at, is_current)
+       VALUES ('v1', 'e1', '1.0.0', '{"when":{}}', '{}', 'BTCUSDT.BINANCE.PERP', 'long', '24h', '{"taker_bps":4,"slippage_bps":2,"funding_included":false}', 1, 1)`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO eval_runs (run_id, edge_version_id, protocol_version, run_kind, dataset_hash, snapshot_id, seed, config, status, requested_by, git_sha)
+       VALUES ('r1', 'v1', '1.0', 'screen', 'h', 's', 0, '{}', 'running', 'test', 'sha')`
+    ).run();
+
+    const res = await internalRoute.request(
+      "/runs/r1/metrics",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          metrics: [{ segment: "all", metric: "ev_bps", value: 12.5, ci_lo: null, ci_hi: null, meta: null }]
+        })
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+  });
+});
+
+describe("POST /internal/runs/:id/verdict (2026-07: field name + null handling)", () => {
+  it("accepts `passed` (not `pass`) on each reason and null for score", async () => {
+    // verdictReasonSchema previously required a field named `pass`, but
+    // every producer/consumer (the Python client, edges.ts's response
+    // shape, the web UI) uses `passed` — a typo meant this endpoint could
+    // never accept a real submission until fixed.
+    await env.DB.prepare(
+      `INSERT INTO edges (edge_id, slug, title, category, status, hypothesis, rationale, origin, created_at, updated_at)
+       VALUES ('e1', 'slug', 'Title', 'microstructure', 'CANDIDATE', 'h', 'r', 'manual', 1, 1)`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO edge_versions (version_id, edge_id, semver, signal_spec, params, instrument_id, direction, horizon, cost_model, created_at, is_current)
+       VALUES ('v1', 'e1', '1.0.0', '{"when":{}}', '{}', 'BTCUSDT.BINANCE.PERP', 'long', '24h', '{"taker_bps":4,"slippage_bps":2,"funding_included":false}', 1, 1)`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO eval_runs (run_id, edge_version_id, protocol_version, run_kind, dataset_hash, snapshot_id, seed, config, status, requested_by, git_sha)
+       VALUES ('r1', 'v1', '1.0', 'screen', 'h', 's', 0, '{}', 'running', 'test', 'sha')`
+    ).run();
+
+    const res = await internalRoute.request(
+      "/runs/r1/verdict",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          verdict: "WATCH",
+          score: null,
+          reasons: [{ check: "ev_bps_ci_lo", passed: true, value: 5, threshold: 0 }],
+          thresholds_version: "v1"
+        })
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+
+    const row = await env.DB.prepare(`SELECT reasons FROM verdicts WHERE run_id = 'r1'`).first<{
+      reasons: string;
+    }>();
+    expect(JSON.parse(row!.reasons)).toEqual([{ check: "ev_bps_ci_lo", passed: true, value: 5, threshold: 0 }]);
+  });
+});
+
 describe("GET /internal/backup/dump (2026-07 review Task 7)", () => {
   it("rejects a table name outside the whitelist", async () => {
     const res = await internalRoute.request("/backup/dump?table=sqlite_master", {}, env);
