@@ -11,6 +11,8 @@ import {
   TRACKED_INSTRUMENTS,
   makeOkxCandlesAdapter,
   makeOkxFundingRateAdapter,
+  makeOkxLiquidationsAdapter,
+  makeOkxLongShortRatioAdapter,
   makeOkxOpenInterestAdapter
 } from "./adapters/okx.js";
 import { alternativeMeFearGreedAdapter } from "./adapters/alternative-me.js";
@@ -34,13 +36,19 @@ export const STREAMS_5M: Adapter[] = [
 ];
 
 // ---- tick-1h: fires when the wall clock hits :15 each hour ---------------
+// Budget: 1 (DVOL) + 2 (LS ratio) + 2 (liquidations) = 5, well under 40.
 export const STREAMS_1H: Adapter[] = [
-  deribitDvolAdapter
-  // TODO (docs/03 §2.1, §2.2): 1h candle confirmation across venues,
-  // funding-rate history sync (bybit_rest, okx_rest), liquidations_5m via
-  // coinglass_v4 free tier, long_short_ratios (Binance topLongShortAccountRatio
-  // etc). Each is a follow-up Adapter registered here — no scheduler changes
-  // needed beyond this array (docs/03 §7).
+  deribitDvolAdapter,
+  // SONNET-1 (docs/15 §4): long_short_ratios/liquidations_5m never had a
+  // live writer (docs/14 §6). OKX rubik + public liquidation-orders are the
+  // only key-free public sources (docs/03 §2.2) — CoinGlass v4 would need
+  // an API key signup that isn't available in a non-interactive session.
+  ...futuresInstruments.map(makeOkxLongShortRatioAdapter),
+  ...futuresInstruments.map(makeOkxLiquidationsAdapter)
+  // TODO (docs/03 §2.1): 1h candle confirmation across venues, funding-rate
+  // history sync (bybit_rest, okx_rest) — each a follow-up Adapter
+  // registered here, no scheduler changes needed beyond this array
+  // (docs/03 §7).
 ];
 
 // ---- tick-1d: fires at 01:20 UTC -----------------------------------------

@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { parseFundingRate, parseOkxCandles, parseOpenInterest, type OkxCandleRaw } from "./okx.js";
+import {
+  parseFundingRate,
+  parseLiquidationOrders,
+  parseLongShortRatio,
+  parseOkxCandles,
+  parseOpenInterest,
+  type OkxCandleRaw,
+  type OkxLiquidationOrdersResponse,
+  type OkxLongShortRatioResponse
+} from "./okx.js";
 
 describe("parseOkxCandles (docs/03 §7 pure-parse contract)", () => {
   it("reverses OKX's newest-first order and keeps only closed bars", () => {
@@ -69,5 +78,53 @@ describe("parseOpenInterest", () => {
 
   it("returns null when there is no data", () => {
     expect(parseOpenInterest({ data: [] })).toBeNull();
+  });
+});
+
+describe("parseLongShortRatio", () => {
+  it("derives long%/short% fractions from OKX's single ratio value", () => {
+    // ratio = 2.0 -> longAccount% = 2/3, shortAccount% = 1/3 (sums to 1).
+    const resp: OkxLongShortRatioResponse = { data: [["1700000000000", "2.0"]] };
+    const parsed = parseLongShortRatio(resp);
+    expect(parsed?.lsRatio).toBe(2.0);
+    expect(parsed?.longRatio).toBeCloseTo(2 / 3);
+    expect(parsed?.shortRatio).toBeCloseTo(1 / 3);
+    expect((parsed?.longRatio ?? 0) + (parsed?.shortRatio ?? 0)).toBeCloseTo(1);
+  });
+
+  it("returns null when there is no data", () => {
+    expect(parseLongShortRatio({ data: [] })).toBeNull();
+  });
+});
+
+describe("parseLiquidationOrders", () => {
+  it("buckets fills into 5-minute windows and sums notional by posSide", () => {
+    const resp: OkxLiquidationOrdersResponse = {
+      data: [
+        {
+          details: [
+            { bkPx: "50000", sz: "100", posSide: "long", ts: "1000" }, // bucket 0
+            { bkPx: "51000", sz: "50", posSide: "short", ts: "50000" }, // same bucket
+            { bkPx: "49000", sz: "200", posSide: "long", ts: (5 * 60_000 + 1000).toString() } // next bucket
+          ]
+        }
+      ]
+    };
+    const buckets = parseLiquidationOrders(resp, "BTC-USDT-SWAP");
+    expect(buckets).toHaveLength(2);
+    // BTC-USDT-SWAP face value = 0.01 BTC/contract.
+    expect(buckets[0]?.ts).toBe(0);
+    expect(buckets[0]?.longLiqUsd).toBeCloseTo(100 * 0.01 * 50000);
+    expect(buckets[0]?.shortLiqUsd).toBeCloseTo(50 * 0.01 * 51000);
+    expect(buckets[0]?.events).toBe(2);
+    expect(buckets[1]?.ts).toBe(5 * 60_000);
+    expect(buckets[1]?.longLiqUsd).toBeCloseTo(200 * 0.01 * 49000);
+  });
+
+  it("returns an empty array for an instrument with no known contract face value", () => {
+    const resp: OkxLiquidationOrdersResponse = {
+      data: [{ details: [{ bkPx: "1", sz: "1", posSide: "long", ts: "1000" }] }]
+    };
+    expect(parseLiquidationOrders(resp, "SOL-USDT-SWAP")).toEqual([]);
   });
 });

@@ -21,7 +21,7 @@
 // returning normalized rows — no fetch, no D1 — so it can be unit-tested
 // against a recorded fixture without a network or database (docs/11 §2).
 
-import { upsertCandles, upsertLatestSnapshot, upsertMetric } from "../db.js";
+import { recordWrites, upsertCandles, upsertLatestSnapshot, upsertMetric } from "../db.js";
 import type { CandleRow } from "@cryptoedge/schema";
 import type { Adapter, AdapterRunResult } from "./types.js";
 import { fetchJson, jitterDelay } from "./types.js";
@@ -183,6 +183,163 @@ export function makeOkxOpenInterestAdapter(instrument: TrackedInstrument): Adapt
         ingested_at: Date.now()
       });
       return { streamId, rowsWritten: 1, watermarkTs: parsed.ts };
+    }
+  };
+}
+
+export interface OkxLongShortRatioResponse {
+  /** [ts, ratio], newest-first (same convention as candles) — no auth required. */
+  data: [string, string][];
+}
+
+/**
+ * SONNET-1 (docs/15 §4): long_short_ratios has never had a live writer
+ * (docs/14 §6 finding — `ls_top_trader_z_30d`/`ls_all_account_z_30d`
+ * features exist but their base table is empty). OKX's rubik "trading
+ * data" long/short account ratio is the only key-free public source
+ * (docs/03 §2.2 already names "OKX rubik" as the V1 plan; CoinGlass v4
+ * would need an API key signup, which isn't available in a non-interactive
+ * session). It reports a single ratio (long-position-count /
+ * short-position-count), not the long%/short% breakdown this project's
+ * schema stores — but since long% + short% = 1 and ratio = long%/short%,
+ * both fractions are recoverable: long% = ratio/(1+ratio), short% =
+ * 1/(1+ratio). Written as ratio_type='all_account'; OKX has no public
+ * "top trader" breakdown, so `ls_top_trader_z_30d` stays DATA_PENDING
+ * until a keyed source is added.
+ */
+export function parseLongShortRatio(
+  resp: OkxLongShortRatioResponse
+): { ts: number; longRatio: number; shortRatio: number; lsRatio: number } | null {
+  const entry = resp.data[0];
+  if (!entry) return null;
+  const ts = Number(entry[0]);
+  const ratio = Number(entry[1]);
+  return { ts, longRatio: ratio / (1 + ratio), shortRatio: 1 / (1 + ratio), lsRatio: ratio };
+}
+
+export function makeOkxLongShortRatioAdapter(instrument: TrackedInstrument): Adapter {
+  const streamId = `okx_rest:long_short_ratio:${instrument.instrumentId}`;
+  return {
+    sourceId: "okx_rest",
+    streamId,
+    requestBudget: 1,
+    async run(env): Promise<AdapterRunResult> {
+      await jitterDelay();
+      const url = `${OKX_BASE}/api/v5/rubik/stat/contracts/long-short-account-ratio-contract?instId=${instrument.okxInstId}&period=5m`;
+      const parsed = parseLongShortRatio(await fetchJson<OkxLongShortRatioResponse>(url));
+      if (!parsed) return { streamId, rowsWritten: 0, watermarkTs: Date.now() };
+      const now = Date.now();
+      await env.DB.prepare(
+        `INSERT INTO long_short_ratios (instrument_id, ratio_type, ts, long_ratio, short_ratio, ls_ratio, ingested_at)
+         VALUES (?1, 'all_account', ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT (instrument_id, ratio_type, ts) DO UPDATE SET
+           long_ratio = excluded.long_ratio, short_ratio = excluded.short_ratio,
+           ls_ratio = excluded.ls_ratio, ingested_at = excluded.ingested_at`
+      )
+        .bind(instrument.instrumentId, parsed.ts, parsed.longRatio, parsed.shortRatio, parsed.lsRatio, now)
+        .run();
+      await recordWrites(env, "d1_writes", 1);
+      await upsertLatestSnapshot(env, `ls_ratio:okx:${instrument.symbol}`, { v: parsed.lsRatio, ts: parsed.ts, ingested_at: now });
+      return { streamId, rowsWritten: 1, watermarkTs: parsed.ts };
+    }
+  };
+}
+
+export interface OkxLiquidationOrderDetail {
+  bkPx: string;
+  sz: string;
+  posSide: string;
+  ts: string;
+}
+
+export interface OkxLiquidationGroup {
+  details: OkxLiquidationOrderDetail[];
+}
+
+export interface OkxLiquidationOrdersResponse {
+  data: OkxLiquidationGroup[];
+}
+
+const FIVE_MIN_MS = 5 * 60_000;
+
+/**
+ * OKX contract face values (published instrument specs, docs/03 §2.2):
+ * BTC-USDT-SWAP = 0.01 BTC/contract, ETH-USDT-SWAP = 0.1 ETH/contract.
+ * `liquidation-orders` reports fill size in contracts with no
+ * currency-denominated alternative field (unlike open interest's `oiCcy`),
+ * so the multiplier has to be applied by hand here — same unit gotcha as
+ * `parseOpenInterest` above.
+ */
+const CONTRACT_FACE_VALUE: Record<string, number> = {
+  "BTC-USDT-SWAP": 0.01,
+  "ETH-USDT-SWAP": 0.1
+};
+
+export interface ParsedLiquidationBucket {
+  ts: number;
+  longLiqUsd: number;
+  shortLiqUsd: number;
+  events: number;
+  maxSingleUsd: number;
+}
+
+/**
+ * Buckets raw liquidation fills into 5-minute windows and sums notional
+ * (contracts * face value * bankruptcy price) per side. `posSide` is the
+ * liquidated position's side, not the closing order's own `side`. The
+ * public endpoint only returns a recent rolling window of fills (no deep
+ * pagination), so a burst exceeding that window between two hourly polls
+ * is permanently undercounted — the same incompleteness docs/09 §3
+ * already flags for liq-cascade-rebound ("清算系列の不完全性を
+ * counter_evidence に明記"), not a new caveat introduced here.
+ */
+export function parseLiquidationOrders(resp: OkxLiquidationOrdersResponse, okxInstId: string): ParsedLiquidationBucket[] {
+  const faceValue = CONTRACT_FACE_VALUE[okxInstId];
+  if (!faceValue) return [];
+  const buckets = new Map<number, ParsedLiquidationBucket>();
+  for (const group of resp.data) {
+    for (const detail of group.details) {
+      const ts = Number(detail.ts);
+      const bucketTs = Math.floor(ts / FIVE_MIN_MS) * FIVE_MIN_MS;
+      const notionalUsd = Number(detail.sz) * faceValue * Number(detail.bkPx);
+      const bucket = buckets.get(bucketTs) ?? { ts: bucketTs, longLiqUsd: 0, shortLiqUsd: 0, events: 0, maxSingleUsd: 0 };
+      if (detail.posSide === "long") bucket.longLiqUsd += notionalUsd;
+      else if (detail.posSide === "short") bucket.shortLiqUsd += notionalUsd;
+      bucket.events += 1;
+      bucket.maxSingleUsd = Math.max(bucket.maxSingleUsd, notionalUsd);
+      buckets.set(bucketTs, bucket);
+    }
+  }
+  return [...buckets.values()].sort((a, b) => a.ts - b.ts);
+}
+
+export function makeOkxLiquidationsAdapter(instrument: TrackedInstrument): Adapter {
+  const streamId = `okx_rest:liquidations:${instrument.instrumentId}`;
+  return {
+    sourceId: "okx_rest",
+    streamId,
+    requestBudget: 1,
+    async run(env): Promise<AdapterRunResult> {
+      await jitterDelay();
+      const url = `${OKX_BASE}/api/v5/public/liquidation-orders?instType=SWAP&instId=${instrument.okxInstId}&state=filled`;
+      const buckets = parseLiquidationOrders(await fetchJson<OkxLiquidationOrdersResponse>(url), instrument.okxInstId);
+      if (buckets.length === 0) return { streamId, rowsWritten: 0, watermarkTs: Date.now() };
+      const now = Date.now();
+      const stmt = env.DB.prepare(
+        `INSERT INTO liquidations_5m (instrument_id, ts, long_liq_usd, short_liq_usd, events, max_single_usd, source_id, ingested_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'okx_rest', ?7)
+         ON CONFLICT (instrument_id, ts, source_id) DO UPDATE SET
+           long_liq_usd = excluded.long_liq_usd, short_liq_usd = excluded.short_liq_usd,
+           events = excluded.events, max_single_usd = excluded.max_single_usd, ingested_at = excluded.ingested_at`
+      );
+      await env.DB.batch(
+        buckets.map((b) =>
+          stmt.bind(instrument.instrumentId, b.ts, b.longLiqUsd, b.shortLiqUsd, b.events, b.maxSingleUsd, now)
+        )
+      );
+      await recordWrites(env, "d1_writes", buckets.length);
+      const last = buckets.at(-1)!;
+      return { streamId, rowsWritten: buckets.length, watermarkTs: last.ts };
     }
   };
 }
