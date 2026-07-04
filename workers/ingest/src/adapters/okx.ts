@@ -321,7 +321,14 @@ export function makeOkxLiquidationsAdapter(instrument: TrackedInstrument): Adapt
     requestBudget: 1,
     async run(env): Promise<AdapterRunResult> {
       await jitterDelay();
-      const url = `${OKX_BASE}/api/v5/public/liquidation-orders?instType=SWAP&instId=${instrument.okxInstId}&state=filled`;
+      // OKX's liquidation-orders endpoint only accepts `instId` as a filter
+      // for instType=MARGIN; SWAP/FUTURES/OPTION must filter by `instFamily`
+      // instead (confirmed live: `instId=BTC-USDT-SWAP&instType=SWAP`
+      // returned HTTP 400 in production, 2026-07). instFamily is the
+      // instId with its contract-type suffix stripped, e.g. "BTC-USDT" for
+      // "BTC-USDT-SWAP".
+      const instFamily = instrument.okxInstId.replace(/-SWAP$/, "");
+      const url = `${OKX_BASE}/api/v5/public/liquidation-orders?instType=SWAP&instFamily=${instFamily}&state=filled`;
       const buckets = parseLiquidationOrders(await fetchJson<OkxLiquidationOrdersResponse>(url), instrument.okxInstId);
       if (buckets.length === 0) return { streamId, rowsWritten: 0, watermarkTs: Date.now() };
       const now = Date.now();
