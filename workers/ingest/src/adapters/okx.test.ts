@@ -127,4 +127,17 @@ describe("parseLiquidationOrders", () => {
     };
     expect(parseLiquidationOrders(resp, "SOL-USDT-SWAP")).toEqual([]);
   });
+
+  it("skips a group whose `details` is omitted rather than an empty array (confirmed live, 2026-07)", () => {
+    const resp: OkxLiquidationOrdersResponse = {
+      data: [
+        { details: [{ bkPx: "50000", sz: "100", posSide: "long", ts: "1000" }] },
+        {}, // no fills for this instrument in the family -- OKX omits `details` here
+        { details: [{ bkPx: "51000", sz: "1", posSide: "short", ts: "2000" }] }
+      ]
+    };
+    const buckets = parseLiquidationOrders(resp, "BTC-USDT-SWAP");
+    expect(buckets).toHaveLength(1);
+    expect(buckets[0]?.events).toBe(2);
+  });
 });

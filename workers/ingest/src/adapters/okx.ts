@@ -253,7 +253,11 @@ export interface OkxLiquidationOrderDetail {
 }
 
 export interface OkxLiquidationGroup {
-  details: OkxLiquidationOrderDetail[];
+  // Optional/nullable: confirmed live in production (2026-07) -- a group
+  // with no fills for its instrument in the response window omits `details`
+  // entirely rather than sending an empty array, which crashed the naive
+  // `for (const detail of group.details)` with "is not iterable".
+  details?: OkxLiquidationOrderDetail[] | null;
 }
 
 export interface OkxLiquidationOrdersResponse {
@@ -298,7 +302,7 @@ export function parseLiquidationOrders(resp: OkxLiquidationOrdersResponse, okxIn
   if (!faceValue) return [];
   const buckets = new Map<number, ParsedLiquidationBucket>();
   for (const group of resp.data) {
-    for (const detail of group.details) {
+    for (const detail of group.details ?? []) {
       const ts = Number(detail.ts);
       const bucketTs = Math.floor(ts / FIVE_MIN_MS) * FIVE_MIN_MS;
       const notionalUsd = Number(detail.sz) * faceValue * Number(detail.bkPx);
