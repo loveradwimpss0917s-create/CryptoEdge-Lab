@@ -13,6 +13,7 @@ import { problemDetailsErrorHandler } from "./middleware/error.js";
 import { actionsRoute } from "./routes/actions.js";
 import { dataHealthRoute } from "./routes/data-health.js";
 import { edgesRoute } from "./routes/edges.js";
+import { lakeRoute } from "./routes/lake.js";
 import { marketRoute } from "./routes/market.js";
 import { opsRoute } from "./routes/ops.js";
 import { packsRoute } from "./routes/packs.js";
@@ -31,6 +32,7 @@ app.route("/api/v1/ops", opsRoute);
 app.route("/api/v1/packs", packsRoute);
 app.route("/api/v1/data-health", dataHealthRoute);
 app.route("/api/v1/actions", actionsRoute);
+app.route("/api/v1/lake", lakeRoute);
 
 app.use("/internal/*", requireInternalToken);
 app.route("/internal", internalRoute);
