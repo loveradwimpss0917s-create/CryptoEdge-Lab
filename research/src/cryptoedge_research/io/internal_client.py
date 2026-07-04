@@ -139,6 +139,13 @@ class InternalApiClient:
         node (docs/05 §9) with real data instead of an always-empty series."""
         return self._get("/internal/events", params={"from": from_ts, "to": to_ts})["events"]
 
+    def get_regimes(self, from_dt: str, to_dt: str) -> list[dict[str, Any]]:
+        """Daily regime labels with `from_dt <= dt <= to_dt` (both
+        "YYYY-MM-DD"), for forward-filling onto the bar series the DSL's
+        `regime` node (docs/05 §9) evaluates against — previously
+        on_demand.py never fetched these at all (2026-07 review, TASK-1)."""
+        return self._get("/internal/regimes", params={"from": from_dt, "to": to_dt})["regimes"]
+
     def get_backup_tables(self) -> list[str]:
         """The whitelisted table names the weekly backup job dumps (docs/12 §3)."""
         return self._get("/internal/backup/tables")["tables"]

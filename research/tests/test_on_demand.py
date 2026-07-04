@@ -9,12 +9,17 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from cryptoedge_research.dsl.evaluator import DslRegime
 from cryptoedge_research.eval.pipeline import EepConfig, EepResult, MetricRow
 from cryptoedge_research.eval.verdict import VerdictOutcome
 from cryptoedge_research.jobs.on_demand import (
     _bucket_events,
+    _forward_fill_regimes,
+    _referenced_event_types,
     _referenced_features,
     _submit_result,
+    _ts_to_dt_str,
+    _uses_regime,
     run_eep_for_edge_version,
 )
 
@@ -95,6 +100,67 @@ def test_missing_referenced_feature_raises_instead_of_silently_never_firing():
     edge_version = _edge_version({"cmp": [{"feature": "missing_feature"}, ">", 0.5]})
     with pytest.raises(ValueError, match="missing_feature"):
         run_eep_for_edge_version(edge_version, price_df, BAR_MS, n_trials=1)
+
+
+def test_referenced_event_types_walks_and_or_not():
+    when = {
+        "and": [
+            {"event": {"type": "cpi_release"}},
+            {"or": [{"not": {"event": {"type": "fomc"}}}, {"cmp": [{"feature": "a"}, ">", 0.5]}]},
+        ]
+    }
+    assert _referenced_event_types(when) == {"cpi_release", "fomc"}
+
+
+def test_uses_regime_walks_and_or_not():
+    regime_node = {"regime": {"trend": ["up"]}}
+    assert _uses_regime({"cmp": [{"feature": "a"}, ">", 0.5]}) is False
+    assert _uses_regime({"and": [{"cmp": [{"feature": "a"}, ">", 0.5]}, regime_node]}) is True
+    assert _uses_regime({"not": regime_node}) is True
+
+
+def test_missing_events_for_event_referencing_signal_spec_raises():
+    # 2026-07 review, TASK-1: an event-referencing signal_spec with no real
+    # events (the events table is empty, or the window has none) used to
+    # silently evaluate to zero trades and a misleading REJECT verdict.
+    price_df = pd.DataFrame(
+        {"ts": [i * BAR_MS for i in range(5)], "open": [100.0] * 5, "close": [100.0] * 5}
+    )
+    edge_version = _edge_version({"event": {"type": "cme_gap"}})
+    with pytest.raises(ValueError, match="cme_gap"):
+        run_eep_for_edge_version(edge_version, price_df, BAR_MS, n_trials=1, events=[])
+
+
+def test_missing_regime_data_for_regime_referencing_signal_spec_raises():
+    price_df = pd.DataFrame(
+        {"ts": [i * BAR_MS for i in range(5)], "open": [100.0] * 5, "close": [100.0] * 5}
+    )
+    edge_version = _edge_version({"regime": {"trend": ["up"]}})
+    with pytest.raises(ValueError, match="regime"):
+        run_eep_for_edge_version(edge_version, price_df, BAR_MS, n_trials=1)
+
+
+def test_regime_wired_through_lets_a_regime_referencing_signal_spec_evaluate():
+    price_df = pd.DataFrame(
+        {"ts": [i * BAR_MS for i in range(5)], "open": [100.0] * 5, "close": [100.0] * 5}
+    )
+    edge_version = _edge_version({"regime": {"trend": ["up"]}})
+    regimes = [DslRegime(trend="up", vol="low", liquidity="normal")] * 5
+    result = run_eep_for_edge_version(edge_version, price_df, BAR_MS, n_trials=1, regimes=regimes)
+    trade_metric = next(m for m in result.metrics if m.segment == "overall" and m.metric == "trades")
+    assert trade_metric.value >= 1
+
+
+def test_forward_fill_regimes_carries_last_known_dt_forward():
+    day_ms = 86_400_000
+    timestamps = [0, day_ms // 2, day_ms, day_ms + day_ms // 2, 2 * day_ms]
+    regime_rows = [
+        {"dt": _ts_to_dt_str(0), "trend": "up", "vol": "low", "liquidity": "normal"},
+        {"dt": _ts_to_dt_str(day_ms), "trend": "down", "vol": "high", "liquidity": "stressed"},
+        # no row for the third day: should carry the second day's regime forward
+    ]
+    result = _forward_fill_regimes(timestamps, regime_rows)
+    assert [r.trend if r else None for r in result] == ["up", "up", "down", "down", "down"]
 
 
 def test_bucket_events_assigns_by_bar_window_and_drops_out_of_range():

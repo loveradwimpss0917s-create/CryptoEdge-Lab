@@ -11,6 +11,7 @@ untestable-without-real-infra wiring that fetches that data from D1
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import os
@@ -58,6 +59,60 @@ def _referenced_features(expr: dict[str, Any]) -> set[str]:
     return set()  # event/regime/time nodes reference no feature series
 
 
+def _referenced_event_types(expr: dict[str, Any]) -> set[str]:
+    """Walks a BoolExpr (docs/05 §9) collecting every `event` node's `type`,
+    mirroring `_referenced_features`. Used so a signal_spec that references
+    an event type but was handed no real events (2026-07 review, TASK-1:
+    previously silent — an event-referencing spec with an empty `events`
+    table just never fired, producing a misleading 0-trade REJECT instead
+    of a recorded failure) raises instead."""
+    if "and" in expr:
+        return {t for e in expr["and"] for t in _referenced_event_types(e)}
+    if "or" in expr:
+        return {t for e in expr["or"] for t in _referenced_event_types(e)}
+    if "not" in expr:
+        return _referenced_event_types(expr["not"])
+    if "event" in expr:
+        return {expr["event"]["type"]}
+    return set()
+
+
+def _uses_regime(expr: dict[str, Any]) -> bool:
+    """Whether a BoolExpr contains any `regime` node — same rationale as
+    `_referenced_event_types`, but for the `regime` node (docs/05 §9),
+    which previously always evaluated against an all-None series since
+    `main()` never fetched `regimes_daily` at all (2026-07 review, TASK-1)."""
+    if "and" in expr:
+        return any(_uses_regime(e) for e in expr["and"])
+    if "or" in expr:
+        return any(_uses_regime(e) for e in expr["or"])
+    if "not" in expr:
+        return _uses_regime(expr["not"])
+    return "regime" in expr
+
+
+def _ts_to_dt_str(ts_ms: int) -> str:
+    return datetime.datetime.fromtimestamp(ts_ms / 1000, tz=datetime.UTC).strftime("%Y-%m-%d")
+
+
+def _forward_fill_regimes(timestamps: list[int], regime_rows: list[dict[str, Any]]) -> list[DslRegime | None]:
+    """Daily regime labels (docs/04 §6) forward-filled onto an hourly bar
+    series: a bar takes its own dt's regime if labeled, else carries
+    forward the most recent earlier dt's regime. `None` until the first
+    labeled dt (e.g. bars older than regimes_daily's history)."""
+    by_dt = {
+        r["dt"]: DslRegime(trend=r["trend"], vol=r["vol"], liquidity=r["liquidity"]) for r in regime_rows
+    }
+    result: list[DslRegime | None] = []
+    current: DslRegime | None = None
+    for ts in timestamps:
+        dt = _ts_to_dt_str(ts)
+        if dt in by_dt:
+            current = by_dt[dt]
+        result.append(current)
+    return result
+
+
 def _bucket_events(
     events: list[dict[str, Any]], timestamps: list[int], bar_interval_ms: int
 ) -> list[list[DslEvent]]:
@@ -98,12 +153,12 @@ def run_eep_for_edge_version(
     producing a misleading REJECT/zero-trades verdict (2026-07 review,
     Task 5).
 
-    `regimes`, if omitted, means every trade is classified "unknown" —
-    correct behavior when regime data hasn't been merged in yet, but the
-    caller (main(), a future feature-store integration) should supply it
-    once available (docs/04 §6). `events`, if omitted, means the `when`
-    clause's `event` nodes never fire — same caveat, supplied by main()
-    via `InternalApiClient.get_events`."""
+    `regimes`/`events`, like features, must actually be supplied whenever
+    the signal_spec references a `regime`/`event` node — an omitted-or-empty
+    series there used to mean "that condition never fires", producing a
+    misleading 0-trade REJECT instead of a recorded failure (2026-07
+    review, TASK-1). `main()` supplies both via `InternalApiClient.get_regimes`/
+    `get_events`."""
     signal_spec = json.loads(edge_version["signal_spec"])
     cost_model_raw = json.loads(edge_version["cost_model"])
     cost_model = CostModel(taker_bps=cost_model_raw["taker_bps"], slippage_bps=cost_model_raw["slippage_bps"])
@@ -125,6 +180,16 @@ def run_eep_for_edge_version(
         raise ValueError(
             f"signal_spec references feature(s) not available in the fetched data: {sorted(missing_features)}"
         )
+
+    referenced_event_types = _referenced_event_types(signal_spec["when"])
+    if referenced_event_types and not events:
+        missing_events = sorted(referenced_event_types)
+        raise ValueError(
+            f"signal_spec references event type(s) not available in the fetched data: {missing_events}"
+        )
+
+    if _uses_regime(signal_spec["when"]) and all(r is None for r in regime_series):
+        raise ValueError("signal_spec references a regime condition but no regime data was supplied")
 
     dsl_input = DslEvalInput(
         timestamps=timestamps,
@@ -238,10 +303,24 @@ def main() -> int:
             if len(price_df) > 0
             else []
         )
+        # docs/04 §6 / docs/05 §3.8: regime-segmented metrics require the
+        # DSL's `regime` node to actually see labeled data — previously
+        # never fetched here at all (2026-07 review, TASK-1).
+        regimes = (
+            _forward_fill_regimes(
+                price_df["ts"].tolist(),
+                client.get_regimes(
+                    _ts_to_dt_str(int(price_df["ts"].min())),
+                    _ts_to_dt_str(int(price_df["ts"].max())),
+                ),
+            )
+            if len(price_df) > 0
+            else []
+        )
 
         try:
             result = run_eep_for_edge_version(
-                edge_version, price_df, bar_interval_ms, n_trials, events=events
+                edge_version, price_df, bar_interval_ms, n_trials, events=events, regimes=regimes
             )
             snapshot_id = f"snapshot-{uuid.uuid4()}"
             # docs/01 §4.4: fingerprints exactly which R2 data version this

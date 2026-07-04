@@ -12,16 +12,35 @@
 (POST/PUT/DELETE) は 401 で拒否**される (フェイルクローズ)。GET は Access 設定前でも
 閲覧できるが、書き込みを有効にするには以下が必要:
 
-1. Cloudflare Zero Trust ダッシュボード → Access → Applications で
-   `cryptoedge-api.<subdomain>.workers.dev` を保護対象アプリケーションとして追加
-2. Application Audience (AUD) タグをコピー
-3. GitHub Secrets に追加:
-   - `ACCESS_TEAM_DOMAIN` (例: `your-team.cloudflareaccess.com`)
-   - `ACCESS_AUD`
-4. `wrangler.jsonc` の `vars` または deploy 時の `--var` でこれらを Worker に渡すか、
-   Secrets として `wrangler secret put` で設定 (機密性を考えると Secret 推奨)
-5. デプロイ後、`curl -I https://.../api/v1/edges -X POST` が Access のログインページ
-   (もしくは JWT なしでの 401) を返すことを確認
+**実運用手順 (2026-07 に実施・検証済み)**: `/internal/*` は research-worker 専用の
+Bearer トークン認証 (`requireInternalToken`, docs/08) であり Cloudflare Access の対象
+**ではない**。しかし Access アプリケーションの Destination をホスト全体
+(`cryptoedge-api.<subdomain>.workers.dev`, path 指定なし) にすると、Access が edge で
+`/internal/*` も含めて認証を要求してしまい、research-worker からの `GET
+/internal/jobs` 等が JWT 無しで 302 (ログインページへのリダイレクト) を返す
+→ `on_demand.py` が JSON パースに失敗して job が failed になる、という事故が起きる
+(2026-07 に実際に発生・特定済み)。**そのため Access アプリケーションは 2 つ必要**:
+
+1. Cloudflare Zero Trust ダッシュボード (`one.dash.cloudflare.com`, 通常の dashboard とは別 URL) →
+   初回は **Zero Trust Free プラン**を選択 (アップグレード誘導が出ても選ばない)
+2. Access controls → Applications → Add an application → **Self-hosted**
+   - アプリ①(本体): Destination = `cryptoedge-api.<subdomain>.workers.dev` (path 空欄 = ホスト全体)。
+     Policy: Action=`Allow`, Include=Emails で運用者本人のメールアドレス
+     (**Apple Private Relay アドレスは OTP メールが届かない/遅延することがある** — 実メールアドレス推奨)
+   - アプリ②(internal bypass): Destination = 同ホスト、**Path = `/internal/*`**。
+     Policy: Action=`Bypass`, Include=`Everyone`(Bypass は条件必須)
+3. アプリ①の Application Audience (AUD) タグを控える — ダッシュボードの「Details」タブや
+   Overview 相当の画面に出ない場合があるため、一覧の「…」→ **Copy as JSON** で得られる
+   JSON に含まれないこともある点に注意(UI 変更で位置が動きうる。見当たらなければ
+   アプリを開き直して各タブを確認する)
+4. Cloudflare ダッシュボード (`dash.cloudflare.com`) → Workers & Pages → `cryptoedge-api` →
+   Settings → Variables and Secrets に Secret として追加 (Worker への反映は即時、再デプロイ不要):
+   - `ACCESS_TEAM_DOMAIN` = `<team-name>.cloudflareaccess.com`
+   - `ACCESS_AUD` = アプリ①の AUD タグ
+5. 動作確認: ブラウザで本体 URL を開き Access ログイン(OTP)が出ること、ログイン後に
+   UI からの評価実行(`POST /api/v1/edges/{id}/eval`)が成功すること、かつ
+   `research-on-demand.yml` のログで `GET .../internal/jobs` が 200 (302 ではない) を
+   返していることの 3 点を確認する
 
 ## 2. 監視・通知
 

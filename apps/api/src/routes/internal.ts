@@ -108,6 +108,30 @@ internalRoute.get("/events", async (c) => {
   return c.json({ events: results ?? [] });
 });
 
+// Daily regime labels (docs/04 §6) need to be forward-filled onto the bar
+// series before running the EEP — the DSL's `regime` node (docs/05 §9)
+// otherwise has nothing to evaluate against. Date-string range rather than
+// unix ms (like /events) since regimes_daily.dt is itself a "YYYY-MM-DD"
+// TEXT primary key (2026-07 review, TASK-1: on_demand.py never fetched
+// regimes_daily at all, so every regime-referencing signal_spec evaluated
+// against an all-None series and could never fire).
+internalRoute.get("/regimes", async (c) => {
+  const from = c.req.query("from") ?? "";
+  const to = c.req.query("to") ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return c.json(
+      { type: "about:blank", title: "from/to query params (YYYY-MM-DD, inclusive) are required", status: 400 },
+      400
+    );
+  }
+  const { results } = await c.env.DB.prepare(
+    `SELECT dt, trend, vol, liquidity FROM regimes_daily WHERE dt >= ?1 AND dt <= ?2 ORDER BY dt ASC`
+  )
+    .bind(from, to)
+    .all();
+  return c.json({ regimes: results ?? [] });
+});
+
 // docs/05 §3.7 DSR needs "cumulative screen+full run count against the
 // edge" as n_trials; research-worker can't compute that itself (it never
 // touches D1 directly), so it fetches this before running the EEP when the

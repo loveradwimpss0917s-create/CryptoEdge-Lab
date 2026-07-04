@@ -62,6 +62,30 @@ describe("GET /internal/events", () => {
   });
 });
 
+describe("GET /internal/regimes (2026-07 review, TASK-1)", () => {
+  it("rejects missing/invalid from-to params", async () => {
+    const res = await internalRoute.request("/regimes?from=2026-07-01&to=not-a-date", {}, env);
+    expect(res.status).toBe(400);
+  });
+
+  it("returns regimes within [from, to] (inclusive) ordered by dt", async () => {
+    const stmt = env.DB.prepare(
+      `INSERT INTO regimes_daily (dt, trend, vol, liquidity, model_version, computed_at)
+       VALUES (?1, ?2, ?3, ?4, 'rule-based-1.0', 1)`
+    );
+    await stmt.bind("2026-06-30", "down", "low", "normal").run(); // before range
+    await stmt.bind("2026-07-01", "up", "low", "normal").run();
+    await stmt.bind("2026-07-02", "range", "high", "stressed").run();
+    await stmt.bind("2026-07-03", "up", "low", "normal").run(); // after range
+
+    const res = await internalRoute.request("/regimes?from=2026-07-01&to=2026-07-02", {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { regimes: { dt: string; trend: string }[] };
+    expect(body.regimes.map((r) => r.dt)).toEqual(["2026-07-01", "2026-07-02"]);
+    expect(body.regimes[0]!.trend).toBe("up");
+  });
+});
+
 describe("GET /internal/edges/:id/trial-count", () => {
   it("returns 0 for an edge with no runs yet", async () => {
     const res = await internalRoute.request("/edges/e1/trial-count", {}, env);
