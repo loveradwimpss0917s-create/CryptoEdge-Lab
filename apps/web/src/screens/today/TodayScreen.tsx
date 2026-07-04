@@ -1,51 +1,127 @@
-// SCR-01 Today (docs/06 §3). Minimal V1 slice: the market snapshot strip +
-// Research Readiness summary (docs/06 §7.6, 2026-07 design) + [Copy for AI]
-// for the daily_briefing Research Pack (docs/07 §2-4, docs/15 SONNET-2). The
-// Action Queue panel is still follow-up work (docs/09 P1) — it depends on
-// jobs data this pass doesn't yet surface.
+// SCR-01 Today (docs/06 §3). V1 slice: market snapshot strip + Research
+// Readiness summary (docs/06 §7.6, 2026-07 design) + daily_briefing Pack
+// display/[Copy for AI] (docs/07 §2-4, docs/15 SONNET-2/7) + Action Queue
+// (docs/06 §1 item 1, docs/15 SONNET-7 V1 slice: SCREEN_DONE/FULL_DONE
+// Edges + open DQ critical issues -- findings-based items are V2 scope,
+// Discovery Engine not yet built).
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ApiError, api, type QuotaRow, type ReadinessState } from "../../api/client";
+import { ApiError, api, type ActionItem, type QuotaRow, type ReadinessState } from "../../api/client";
 import { formatSnapshotValue, formatUtcTimestamp } from "../../lib/format";
 import { QUOTA_RESOURCE_LABEL } from "../../lib/labels";
 
-type CopyState = "idle" | "copying" | "copied" | "not_found" | "error";
+// docs/07 §4: the daily_briefing Research Pack, shown inline (収縮/展開
+// 可能) with a [Copy for AI] fallback for pasting into Claude/ChatGPT/
+// Gemini — no server-side AI call involved either way.
+function BriefingPanel() {
+  const [expanded, setExpanded] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const { data: pack, isLoading, error } = useQuery({
+    queryKey: ["daily-briefing-pack"],
+    queryFn: () => api.getLatestPack("briefing"),
+    retry: false
+  });
 
-// docs/07 §4 [Copy for AI]: fetches the latest daily_briefing Pack and
-// copies its markdown to the clipboard so the researcher can paste it
-// straight into Claude/ChatGPT/Gemini — no server-side AI call involved.
-function CopyForAiButton() {
-  const [state, setState] = useState<CopyState>("idle");
-
-  async function handleClick() {
-    setState("copying");
+  async function handleCopy() {
+    if (!pack) return;
     try {
-      const pack = await api.getLatestPack("briefing");
       await navigator.clipboard.writeText(pack.content);
-      setState("copied");
-    } catch (err) {
-      setState(err instanceof ApiError && err.problem.status === 404 ? "not_found" : "error");
+      setCopyState("copied");
+    } catch {
+      setCopyState("error");
     }
   }
 
-  const label: Record<CopyState, string> = {
-    idle: "📋 Copy for AI (daily briefing)",
-    copying: "取得中…",
-    copied: "✓ コピーしました",
-    not_found: "まだ生成されていません",
-    error: "取得に失敗しました"
-  };
+  const notFound = error instanceof ApiError && error.problem.status === 404;
 
   return (
-    <button
-      onClick={handleClick}
-      disabled={state === "copying"}
-      className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700 disabled:opacity-50"
-    >
-      {label[state]}
-    </button>
+    <section className="space-y-2 rounded border border-slate-800 bg-slate-900 p-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs font-medium text-slate-400">☀ DAILY BRIEFING{pack ? ` (${pack.ref_date})` : ""}</h2>
+        <div className="flex items-center gap-2">
+          {pack && (
+            <button
+              onClick={handleCopy}
+              className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700"
+            >
+              {copyState === "copied" ? "✓ コピーしました" : "📋 Copy for AI"}
+            </button>
+          )}
+          {pack && (
+            <button onClick={() => setExpanded((v) => !v)} className="text-xs text-slate-500 hover:text-slate-300">
+              {expanded ? "折りたたむ" : "全文を読む"}
+            </button>
+          )}
+        </div>
+      </div>
+      {isLoading && <p className="text-xs text-slate-500">読み込み中…</p>}
+      {notFound && <p className="text-xs text-slate-500">まだ生成されていません (research-daily 実行後に表示されます)。</p>}
+      {error && !notFound && <p className="text-xs text-reject">ブリーフィングの読み込みに失敗しました。</p>}
+      {pack && (
+        <pre
+          className={`whitespace-pre-wrap font-sans text-xs text-slate-300 ${expanded ? "" : "max-h-24 overflow-hidden"}`}
+        >
+          {pack.content}
+        </pre>
+      )}
+    </section>
+  );
+}
+
+const ACTION_KIND_LABEL: Record<ActionItem["kind"], string> = {
+  approval: "承認",
+  review: "レビュー",
+  dq: "DQ"
+};
+
+const ACTION_KIND_BADGE_CLASS: Record<ActionItem["kind"], string> = {
+  approval: "bg-adopt text-slate-950",
+  review: "bg-watch text-slate-950",
+  dq: "bg-reject text-slate-950"
+};
+
+// Action Queue (docs/06 §1 item 1, docs/15 SONNET-7 V1 slice).
+function ActionQueuePanel() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["action-queue"],
+    queryFn: api.actionQueue,
+    refetchInterval: 60_000
+  });
+
+  if (isLoading) return null;
+  const items = data?.items ?? [];
+
+  return (
+    <section className="space-y-2 rounded border border-slate-800 bg-slate-900 p-3">
+      <h2 className="text-xs font-medium text-slate-400">▶ ACTION QUEUE ({items.length})</h2>
+      {items.length === 0 && <p className="text-xs text-slate-600">対応待ちの項目はありません。</p>}
+      <ul className="space-y-1.5">
+        {items.map((item, i) => {
+          const label = (
+            <>
+              <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${ACTION_KIND_BADGE_CLASS[item.kind]}`}>
+                {ACTION_KIND_LABEL[item.kind]}
+              </span>{" "}
+              <span className="text-sm">{item.title}</span>
+              <div className="text-xs text-slate-500">{item.detail}</div>
+            </>
+          );
+          return (
+            <li key={`${item.kind}-${item.edge_id ?? item.title}-${i}`} className="rounded border border-slate-800 bg-slate-950 p-2">
+              {item.edge_id ? (
+                <Link to="/edges/$edgeId" params={{ edgeId: item.edge_id }} className="block hover:opacity-80">
+                  {label}
+                </Link>
+              ) : (
+                <div>{label}</div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
@@ -112,20 +188,19 @@ export function TodayScreen() {
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">今日</h1>
+      <BriefingPanel />
+      <ActionQueuePanel />
       {readinessSummary && (
         <div className="space-y-3 rounded border border-slate-800 bg-slate-900 p-3">
           <div className="flex items-center justify-between">
             <h2 className="text-xs font-medium text-slate-400">🧭 RESEARCH READINESS</h2>
-            <div className="flex items-center gap-2">
-              <CopyForAiButton />
-              <Link
-                to="/board"
-                search={{ readiness: "READY" }}
-                className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-slate-950 hover:bg-emerald-500"
-              >
-                今すぐ評価可能: {readinessSummary.ready_count}件 →
-              </Link>
-            </div>
+            <Link
+              to="/board"
+              search={{ readiness: "READY" }}
+              className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-slate-950 hover:bg-emerald-500"
+            >
+              今すぐ評価可能: {readinessSummary.ready_count}件 →
+            </Link>
           </div>
           <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
             {(Object.keys(BLOCKED_ROW_LABEL) as (keyof typeof BLOCKED_ROW_LABEL)[]).map((key) => (

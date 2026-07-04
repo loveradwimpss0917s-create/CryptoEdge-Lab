@@ -199,6 +199,13 @@ export interface PackContent {
   content: string;
 }
 
+// Action Queue (docs/06 §1 item 1, docs/15 SONNET-7 V1 slice).
+export interface ActionItem {
+  kind: "approval" | "review" | "dq";
+  edge_id: string | null;
+  title: string;
+  detail: string;
+}
 
 export const api = {
   listEdges: (params?: { status?: string; category?: string; q?: string }) => {
@@ -222,6 +229,7 @@ export const api = {
   readinessSummary: () => request<ReadinessSummary>("/edges/readiness-summary"),
   getLatestPack: (kind: string) => request<PackContent>(`/packs/${kind}/latest`),
   dataHealth: () => request<DataHealth>("/data-health"),
+  actionQueue: () => request<{ items: ActionItem[] }>("/actions"),
   createEdge: (body: CreateEdgeRequest) =>
     request<{ edge_id: string; slug: string; status: string }>("/edges", {
       method: "POST",

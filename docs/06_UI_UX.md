@@ -72,10 +72,12 @@ Discovery Lab ──(昇格)──▶ Dossier (新規 CANDIDATE)
 ```
 Readiness サマリは「今すぐ評価可能な Edge 数」+「ブロック理由の内訳」+「人間のレビュー待ち件数 (SCREEN/FULL 済み)」を提示する。各行はクリックで Edge Board の Readiness ビューを該当状態で絞り込む。数値は §7 の readiness 自動判定を集計したもの (上例は 2026-07 Edge Pack v1 実行後の実測値: READY 3 は OI/LS 非依存の time/price 系, DATA待ち 2 は OI・Top-Trader L/S 依存 Edge)。
 
-**実装状況 (docs/15 SONNET-2, 2026-07)**: 上のワイヤーフレーム全体 (Briefing 全文表示・Action Queue・
-Portfolio Pulse) はまだ未実装 (docs/09 P1)。実装済みなのは Readiness サマリパネル内の
-[Copy for AI] ボタンのみ — daily_briefing Pack (research-daily ジョブが生成) の最新版を取得し
-クリップボードへコピーする。Pack本文の画面内表示や日付選択は未実装。
+**実装状況 (docs/15 SONNET-2/7, 2026-07)**: Briefing パネル (daily_briefing Pack の本文表示 + [Copy for AI]、
+折りたたみ可能) と Action Queue (SCREEN_DONE/FULL_DONE Edge のレビュー・承認待ち + open DQ critical
+issue) を実装済み。Portfolio Pulse (ACTIVE/PAPER件数・有効独立数・paper equity曲線) は未実装のまま
+(paper_signalsの母数が少ないうちは意味のある表示にならないため、docs/09 P2の相関/ポートフォリオ機能と
+合わせて実装する想定)。Action Queue の findings 由来の項目は Discovery Engine 未実装のため対象外 (V2)。
+日付選択 (過去のBriefing閲覧) は未実装、常に最新版のみ表示。
 
 ### SCR-02 Edge Board (kanban)
 

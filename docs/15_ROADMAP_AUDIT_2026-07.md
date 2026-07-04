@@ -167,10 +167,17 @@ docs/14 (Edge Pack v1) のフェーズ計画との接続も明記する。
   (キー不要、`stable.usdt_mcap`/`stable.total_stable_mcap` の metric_defs は既に登録済み)
 - 受入条件 (未達成分): 各テーブルにデータが入り Data Health (SONNET-4) で品質スコアが見えること
 
-### SONNET-7 (P1): Today 完成 (Action Queue + テンプレブリーフィング表示)
+### SONNET-7 (完了): Today 完成 (Action Queue + テンプレブリーフィング表示)
 
-- 内容: docs/06 SCR-01 の残り — ai_outputs(briefing) の表示 (SONNET-2 の Pack と同根)、jobs ベースの Action Queue
-- 受入条件: 朝 Today を開けば「ブリーフィング + 今日やること + Readiness」が 1 画面で揃う
+- `GET /api/v1/actions` を実装: SCREEN_DONE/FULL_DONE Edge (承認待ち/レビュー待ち) + open DQ critical
+  issue を単一キューとして返す。findings 由来の項目は Discovery Engine 未実装のため対象外 (V2)
+- Today 画面に Briefing パネル (Pack本文表示 + 折りたたみ + Copy for AI) と Action Queue パネルを追加。
+  jobs ベースの項目 (docs/06 原案) ではなく Readiness state ベースにした — jobs テーブルは
+  screen/full 実行キューであって「人間のレビュー待ち」を直接表さないため、Readiness (SONNET-4以前に
+  実装済み) の SCREEN_DONE/FULL_DONE を項目源にする方が実データと一致する
+- Portfolio Pulse は未実装のまま据え置き (paper_signals 母数が少ないうちは無意味、docs/09 P2の
+  相関/ポートフォリオ機能と合わせて実装する想定)
+- typecheck/test/lint 全緑 (api 73テスト)、本番デプロイ成功確認要
 
 ### SONNET-8 (P1): Explorer 最小版 (DuckDB-WASM)
 
