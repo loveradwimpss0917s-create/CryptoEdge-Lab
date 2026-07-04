@@ -177,3 +177,41 @@ V1 完了後に、SONNET-1/6 で解除される DATA 待ちの状況と合わせ
 
 - docs/09 が引き続きロードマップの正典。本書は 2026-07 時点のスナップショット監査 + ハンドオフ指示書
 - 逸脱は §3 に記録したもののみ。以後の逸脱も本書の様式 (理由・差分・メリデメ) で追記する
+
+## 6. 実行ログ (SONNET-1〜3, 2026-07-04)
+
+### SONNET-1 (完了): long_short_ratios / liquidations_5m ライブ収集
+
+- OKX rubik long/short 比率アダプタ、liquidation-orders 清算アダプタを実装・デプロイ (`15ca993`)
+- 本番初回 tick-1h (13:15 UTC) で **long_short_ratios は成功** (2行書き込み)。
+  **liquidations_5m は HTTP 400** — OKX の `liquidation-orders` は `instType=SWAP` に対して `instId` フィルタを受け付けず `instFamily` が必要と判明 (本番実データで発見)。`fe89c05` で修正・デプロイ済み。次回 tick-1h (14:15 UTC以降) で再検証要
+
+### SONNET-2 (完了): Research Pack V1 slice
+
+- daily_briefing Pack 生成・[Copy for AI]・貼り戻しフォームを実装・デプロイ (`92c918d`)
+- research-daily.yml 手動実行で実際に Pack が生成され `ai_outputs`/R2 へ登録されることを本番で確認済み
+
+### SONNET-3 (状況確認のみ、新規実装なし): P0 シード3件
+
+**認証上の制約**: `POST /api/v1/edges/:id/versions` `/eval` は Cloudflare Access 必須のミューテーションで、
+このエージェントセッションから直接実行できない。Phase 1 の D1 直接投入は「今回のみの一時対応」と
+明示されているため再利用せず、既存の edge_version/eval_runs 状態を読み取り専用で確認するに留めた。
+
+**確認できた実態** (3件とも edge_version は既に存在し signal_spec は docs/09 §3 どおり正しい — 新規作成不要):
+
+| Edge | 状態 | 詳細 |
+|---|---|---|
+| utc-2123-drift (EC-018) | **評価済み** | screen×2・full×2 が既に完了 (完了時刻 2026-07-04 00:20〜07:02 UTC、本セッション外)。最新 full run: EV=-6.99bps, Sharpe=-1.58, DSR≈0.0000275, p_perm=0.18 → **REJECT** |
+| cme-gap-fill (EC-021) | **評価不可 (ブロック)** | screen/full とも `signal_spec references event type(s) not available in the fetched data: ['cme_gap']` で失敗 (直近試行 09:43 UTC)。`events` テーブルに `cme_gap` 行が0件 |
+| usdt-mint-drift (EC-031) | **評価不可 (ブロック)** | 同様に `usdt_mint` イベント0件で失敗 (直近試行 13:08 UTC) |
+
+**根本原因 (バグではなく想定挙動)**: cme_gap/usdt_mint/econ_calendar の3アダプタは `STREAMS_1D` 所属で
+1日1回 (01:20 UTC) しか発火しない。`ingest_state` にはこの3アダプタの行が一切無く
+(`alternative_me` のみ 'ok') — TASK-4 のデプロイが当日の 01:20 UTC 発火より後だったため、
+デプロイ後まだ一度も実行機会が無かったと判明。翌日 01:20 UTC 以降に初回実行されるが、
+そこから実際に CME ギャップ (週末) や $1B 級 USDT mint が観測されるまではさらに時間を要する。
+
+**次アクション**: cme-gap-fill/usdt-mint-drift の再評価は、events テーブルに該当イベントが
+最低数件溜まってから (数日〜) 行うのが妥当。今 job を再投入しても同じ理由で失敗するだけなので
+見送った。utc-2123-drift の REJECT 結果は正式な V1 DoD #3 実績として記録済み (3件中1件完了、
+2件はデータ蓄積待ち)。
