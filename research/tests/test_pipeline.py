@@ -8,7 +8,13 @@ import pytest
 
 from cryptoedge_research.dsl.evaluator import DslEvalInput, compute_fires
 from cryptoedge_research.eval.backtest import CostModel, forward_returns_series, run_backtest
-from cryptoedge_research.eval.pipeline import EepConfig, run_eep
+from cryptoedge_research.eval.pipeline import (
+    FULL_EEP_CONFIG,
+    SCREEN_EEP_CONFIG,
+    EepConfig,
+    eep_config_for_run_kind,
+    run_eep,
+)
 
 BAR_MS = 3_600_000  # 1h bars
 WHEN = {"cmp": [{"feature": "flag"}, ">", 0.5]}
@@ -81,3 +87,15 @@ def test_marginal_edge_found_via_many_trials_is_not_adopted():
     dsr_many = next(m.value for m in result_many.metrics if m.segment == "wf:oos" and m.metric == "dsr")
     assert dsr_many <= dsr_1
     assert result_many.verdict.verdict != "ADOPT"
+
+
+def test_eep_config_for_run_kind_gives_screen_runs_a_cheaper_config():
+    # docs/05 §2: screen is a "簡易EEP" -- 2026-07 design audit TASK-5.
+    assert eep_config_for_run_kind("screen") is SCREEN_EEP_CONFIG
+    assert SCREEN_EEP_CONFIG.permutation_iterations < FULL_EEP_CONFIG.permutation_iterations
+    assert SCREEN_EEP_CONFIG.bootstrap_iterations < FULL_EEP_CONFIG.bootstrap_iterations
+
+
+@pytest.mark.parametrize("run_kind", ["full", "incremental", "decay_check", "anything-else"])
+def test_eep_config_for_run_kind_defaults_everything_else_to_full_rigor(run_kind):
+    assert eep_config_for_run_kind(run_kind) is FULL_EEP_CONFIG

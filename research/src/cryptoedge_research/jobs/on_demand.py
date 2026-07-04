@@ -28,7 +28,13 @@ from cryptoedge_research.eval.backtest import (
     parse_horizon_bars,
     run_backtest,
 )
-from cryptoedge_research.eval.pipeline import PROTOCOL_VERSION, EepConfig, EepResult, run_eep
+from cryptoedge_research.eval.pipeline import (
+    PROTOCOL_VERSION,
+    EepConfig,
+    EepResult,
+    eep_config_for_run_kind,
+    run_eep,
+)
 from cryptoedge_research.io.internal_client import (
     InternalApiClient,
     RunMetricInput,
@@ -333,7 +339,13 @@ def main() -> int:
 
         try:
             result = run_eep_for_edge_version(
-                edge_version, price_df, bar_interval_ms, n_trials, events=events, regimes=regimes
+                edge_version,
+                price_df,
+                bar_interval_ms,
+                n_trials,
+                config=eep_config_for_run_kind(run_kind),
+                events=events,
+                regimes=regimes,
             )
             snapshot_id = f"snapshot-{uuid.uuid4()}"
             # docs/01 §4.4: fingerprints exactly which R2 data version this

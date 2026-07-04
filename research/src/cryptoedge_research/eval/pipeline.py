@@ -52,6 +52,28 @@ class EepConfig:
     recent_years: int = 2
 
 
+# docs/05 §2's state table: "CANDIDATE→TESTING | screen run (簡易EEP) で
+# ev_bps > 0 かつ p_perm < 0.20" -- a screen run only ever needs to move
+# those two `overall`-segment numbers, unlike a full run's ADOPT decision
+# (docs/05 §2 "TESTING→VALIDATED | full run の verdict = ADOPT"), which
+# reads the bootstrap-CI'd wf:oos metrics `decide_verdict` gates on. Before
+# this (2026-07 design audit TASK-5), on_demand.py never passed a
+# `run_kind`-specific config at all, so a "screen" run cost exactly as much
+# compute as a "full" one -- the opposite of what "簡易" (simplified) means,
+# and the actual bottleneck for bulk-screening the ~50 unseeded seed Edges.
+SCREEN_EEP_CONFIG = EepConfig(n_folds=3, permutation_iterations=200, bootstrap_iterations=300)
+FULL_EEP_CONFIG = EepConfig()
+
+
+def eep_config_for_run_kind(run_kind: str) -> EepConfig:
+    """Only an exact `"screen"` gets the cheaper config -- `"full"` and
+    anything else (`"incremental"`, `"decay_check"`) default to full rigor
+    defensively, since those gate ACTIVE/PAPER transitions and a decay
+    check silently running under-powered would be worse than one running
+    slower than necessary."""
+    return SCREEN_EEP_CONFIG if run_kind == "screen" else FULL_EEP_CONFIG
+
+
 _MIN_SPAN_YEARS = 1.0 / 365.0  # floor at one day, so a same-timestamp trade set can't blow up to infinity
 
 
