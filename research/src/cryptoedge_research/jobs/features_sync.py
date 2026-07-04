@@ -40,10 +40,16 @@ _LS_RATIO_COLUMNS = {"top_trader_position": "ls_top_trader_position", "all_accou
 def _read_curated_for_instrument(table: str, instrument_id: str) -> pd.DataFrame | None:
     """The R2 mirror `jobs.lake_sync.sync_d1_curated` writes for `table`,
     filtered to one instrument and sorted by ts -- or `None` if that table
-    hasn't been mirrored yet (first-ever run, before any lake-sync)."""
+    hasn't been mirrored yet (first-ever run, before any lake-sync) *or*
+    was mirrored with zero rows (a genuinely empty D1 table serializes to
+    a columnless parquet, which is functionally the same "nothing to
+    merge" case; found live, 2026-07: this crashed with `KeyError:
+    'instrument_id'` before this guard existed)."""
     try:
         df = lake.read_parquet(f"curated/market/{table}/data.parquet")
     except OSError:
+        return None
+    if "instrument_id" not in df.columns:
         return None
     return df[df["instrument_id"] == instrument_id].sort_values("ts").reset_index(drop=True)
 

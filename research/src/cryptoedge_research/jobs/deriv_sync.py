@@ -283,6 +283,16 @@ def _watermark_date(curated_table: str, instrument_id: str, source_id: str | Non
         df = lake.read_parquet(f"curated/market/{curated_table}/data.parquet")
     except OSError:
         return datetime.date.fromisoformat(_DEFAULT_START_DATE)
+    if "instrument_id" not in df.columns:
+        # sync_d1_curated mirrors a genuinely empty D1 table (nothing
+        # backfilled into it yet) as a columnless parquet -- same as "not
+        # mirrored yet" for watermark purposes (found live, 2026-07: the
+        # very first deriv backfill run left long_short_ratios/
+        # liquidations_5m empty because binance.vision's `metrics`/
+        # `liquidationSnapshot` archives don't go back to
+        # `_DEFAULT_START_DATE`, and this crashed the *next* run's
+        # watermark lookup with KeyError before this guard existed).
+        return datetime.date.fromisoformat(_DEFAULT_START_DATE)
     df = df[df["instrument_id"] == instrument_id]
     if source_id is not None:
         df = df[df["source_id"] == source_id]

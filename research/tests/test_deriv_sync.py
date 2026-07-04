@@ -191,6 +191,16 @@ def test_watermark_date_resumes_the_day_after_the_latest_synced_ts():
     assert _watermark_date("funding_rates", "BTCUSDT.BINANCE.PERP") == datetime.date(2024, 1, 2)
 
 
+def test_watermark_date_falls_back_to_default_start_for_a_columnless_empty_mirror():
+    # jobs.lake_sync.sync_d1_curated mirrors a genuinely empty D1 table
+    # (nothing backfilled yet, e.g. because binance.vision's archives
+    # don't go back to _DEFAULT_START_DATE) as a columnless parquet --
+    # found live, 2026-07: this crashed with KeyError('instrument_id')
+    # before _watermark_date guarded against it.
+    lake.write_parquet("curated/market/liquidations_5m/data.parquet", pd.DataFrame([]))
+    assert _watermark_date("liquidations_5m", "BTCUSDT.BINANCE.PERP") == datetime.date(2019, 9, 8)
+
+
 def test_backfill_funding_for_target_submits_parsed_rows():
     target = BackfillTarget("BTCUSDT.BINANCE.PERP", "BTCUSDT", "futures/um")
 

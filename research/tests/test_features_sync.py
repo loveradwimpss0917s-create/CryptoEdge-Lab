@@ -42,6 +42,18 @@ def test_merge_deriv_columns_fills_nan_when_nothing_is_mirrored_to_r2_yet():
         assert df[column].isna().all()
 
 
+def test_merge_deriv_columns_fills_nan_for_a_columnless_empty_mirror():
+    # jobs.lake_sync.sync_d1_curated mirrors a genuinely empty D1 table as
+    # a columnless parquet -- found live, 2026-07: this crashed with
+    # KeyError('instrument_id') before _read_curated_for_instrument
+    # guarded against it.
+    lake.write_parquet("curated/market/long_short_ratios/data.parquet", pd.DataFrame([]))
+    lake.write_parquet("curated/market/liquidations_5m/data.parquet", pd.DataFrame([]))
+    df = _merge_deriv_columns(_candles(5), INSTRUMENT)
+    assert df["ls_all_account"].isna().all()
+    assert df["liq_notional_1h"].isna().all()
+
+
 def test_merge_deriv_columns_forward_fills_funding_and_oi_onto_the_hourly_grid():
     lake.write_parquet(
         "curated/market/funding_rates/data.parquet",
