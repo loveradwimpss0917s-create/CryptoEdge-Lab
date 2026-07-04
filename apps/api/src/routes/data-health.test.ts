@@ -52,6 +52,33 @@ describe("GET /data-health (docs/15 SONNET-4)", () => {
     expect(body.overall_quality_score).toBeCloseTo(1);
   });
 
+  it("excludes disabled sources' streams from overall_quality_score and sorts them last (migration 0007)", async () => {
+    const now = Date.now();
+    await env.DB.prepare(
+      `INSERT INTO ingest_state (stream_id, watermark_ts, last_run_at, last_status, consecutive_errors)
+       VALUES ('okx_rest:candles_1m:BTCUSDT.BINANCE.PERP', ?1, ?1, 'ok', 0)`
+    )
+      .bind(now)
+      .run();
+    // binance_rest is marked 'disabled' by migration 0007 -- a permanently
+    // dead stream (40 consecutive errors) that must not count against the
+    // overall score.
+    await env.DB.prepare(
+      `INSERT INTO ingest_state (stream_id, watermark_ts, last_run_at, last_status, consecutive_errors)
+       VALUES ('binance_rest:klines_1m:BTCUSDT.BINANCE.PERP', 0, ?1, 'error:HTTP 403', 40)`
+    )
+      .bind(now)
+      .run();
+
+    const res = await dataHealthRoute.request("/", {}, env);
+    const body = (await res.json()) as {
+      overall_quality_score: number;
+      sources: { source_id: string; status: string }[];
+    };
+    expect(body.overall_quality_score).toBeCloseTo(1); // only okx_rest (healthy) counts
+    expect(body.sources.at(-1)?.status).toBe("disabled");
+  });
+
   it("excludes resolved issues from open_issues counts and the recent list", async () => {
     const now = Date.now();
     await env.DB.prepare(

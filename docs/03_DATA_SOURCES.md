@@ -39,6 +39,13 @@
 | ~~`binance_rest`~~ | ~~Binance (spot+USD-M futures) 直叩き~~ | — | — | **2026-07 に運用中止**: Binance の WAF が Cloudflare Workers の共有 egress IP を HTTP 403 (`fapi.binance.com`) / 451 (`api.binance.com`) でブロックすることを確認。地域制限リスクは元々本表で警告していたが、実際には全リクエストが恒常的に失敗した。ヘッダ調整では回避不可 (クラウド/データセンター帯 IP そのものを狙った既知のブロック) |
 | ~~`bybit_rest`~~ (tick-5m 用途) | ~~Bybit v5~~ | — | — | 同時期の到達性調査 (`diagnostics.ts`, 2026-07) で HTTP 403 を確認、Binance 同様ブロック対象。funding 乖離 (050) 用の冗長系としての将来利用は保留 |
 | ~~`coingecko`~~ | ~~CoinGecko public API~~ | — | — | 2026-07 に一度 Binance の代替として採用したが、Cloudflare Workers 全体で egress IP を共有するため無料枠のレート制限 (10-30 req/min/IP) が他ユーザーの合算トラフィックで即座に枯渇し、初回リクエストから 403/429 が発生。**運用不可と判断し okx_rest へ再移行** |
+
+**本文の運用中止決定を DB に反映 (migration 0007, docs/15 SONNET-4フォローアップ, 2026-07)**: 上表の
+取り消し線3件 (`binance_rest`/`bybit_rest`/`coingecko`) は `data_sources.status` が `'active'` の
+ままだったため、Data Health 画面 (SCR-05) がこれらの恒久停止ストリームを「現在進行形の問題」として
+表示し、全体品質スコアを引きずり下ろしていた (ユーザー報告、実機スクリーンショットで発見)。
+`status='disabled'` に更新し、Data Health 側は無効化ソースを品質スコア集計・open issues 一覧から除外し
+UI下部に折りたたみ表示する。
 | `okx_rest` | OKX v5 | `/api/v5/market/candles` (1m 足), `/api/v5/public/funding-rate`, `/api/v5/public/open-interest` | 20 req/2s | **tick-5m の主力ソース** (schedule.ts `makeOkxCandlesAdapter` / `makeOkxFundingRateAdapter` / `makeOkxOpenInterestAdapter`, 2026-07〜)。到達性調査で HTTP 200 を確認済み。既存の `instrument_id`(例 `BTCUSDT.BINANCE.PERP`)は edge_versions.signal_spec が直接参照するため据え置き — 価格は取引所間裁定でほぼ同値だが、funding/OI は実質 OKX の値である点に注意 (誤って「Binance の実データ」と読まないこと)。**単位/PIT 修正 (2026-07 レビュー, migration 0005)**: funding の `ts` は決済予定時刻(未来)ではなく取得時刻を使用し決済時刻は `meta.next_funding_time` へ退避。OI は契約枚数 (`oi`) ではなく基軸通貨建て (`oiCcy`) を `oi_base` に格納。先物 1m 足の出来高は契約枚数ではなく `volCcy`/`volCcyQuote` (基軸/建玉通貨) を使用。**429 対策 (2026-07 レビュー Task 6)**: 呼び出し間に 300-800ms のジッター (`jitterDelay`) を挟み、`fetchJson` は 429 を `Retry-After` (既定 1000ms) 待って 1 回だけ再試行する。継続的な 429 は DQ-02 の連続失敗閾値を 3→6 に緩和 (自己解消しやすいノイズのため、実障害と同列に警報しない) |
 | `binance_data_vision` | data.binance.vision | 日次 ZIP (klines/aggTrades/fundingRate 等の全履歴) | 制限緩い | **ヒストリカル一括バックフィル専用**。research-worker が直接取得し R2 へ。到達性未確認 (静的ファイル配信なので REST WAF ブロックの対象外である可能性が高い) |
 | `deribit_rest` | Deribit | `public/get_volatility_index_data` (DVOL), `public/get_book_summary_by_currency` (option OI/IV), `public/ticker`, `public/get_instruments` | 認証不要, 緩い | オプション系の中核 (013–017)。板サマリから RR25/ATM IV を ingest Worker で集計 |

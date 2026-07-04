@@ -268,3 +268,16 @@ V1 完了後に、SONNET-1/6 で解除される DATA 待ちの状況と合わせ
 - Edge Dossier に Paper タブ最小版 (`GET /edges/:id` の `paper_signals[]`) を追加
 - 本番にはまだ PAPER 状態の Edge が存在しないため、実データでの動作確認は未実施。単体テスト
   (FakeD1 バックエンド、13件) で検証済み。typecheck/test/lint 全緑
+
+### バグ修正: Data Health が恒久停止ソースを問題として表示 (2026-07, ユーザー報告)
+
+- 現象: 本番の Data Health 画面で全体品質スコアが 59.1% と表示され、`binance_rest` の全ストリームが
+  0%・連続エラー40・open issueありとして表示されていた (実機スクリーンショットで発見)
+- 原因: docs/03 §2.1 で「2026-07 に運用中止」と明記済みの `binance_rest`/`bybit_rest`/`coingecko`
+  (Cloudflare Workers 共有 egress IP への WAF ブロックで恒久的に到達不能) が、`data_sources.status`
+  列では `'active'` のままだった。Data Health (SONNET-4) の品質スコア計算がこれを他の現役ソースと
+  区別せず平均に含めていた
+- 修正: `migrations/0007_retire_blocked_sources.sql` で該当3ソースを `status='disabled'` に更新。
+  `computeDataHealth` は disabled ソースのストリームを `overall_quality_score` と `open_issues` から
+  除外 (ストリーム自体は「無効化済みソース」として折りたたみ表示に残す)。Data Health 画面も
+  disabled ソースを下部の折りたたみへ分離。api 74テスト・typecheck/lint 全緑

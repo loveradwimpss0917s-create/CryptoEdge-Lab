@@ -142,6 +142,15 @@ export async function computeDataHealth(env: Env): Promise<DataHealthResult> {
     issuesByStream.set(row.stream_id, counts);
   }
 
+  // Sources marked 'disabled' (e.g. binance_rest/bybit_rest/coingecko --
+  // permanently blocked by their WAF against Cloudflare Workers' shared
+  // egress IPs, docs/03 §2.1, migration 0007) are a settled decision, not
+  // an ongoing problem -- their dead streams still show up per-stream
+  // (so the history is visible) but must not drag down
+  // overall_quality_score or be read as "something is currently wrong"
+  // (found live via the Data Health screen, 2026-07).
+  const statusBySource = new Map((dataSourcesResult.results ?? []).map((s) => [s.source_id, s.status]));
+
   const streamsBySource = new Map<string, StreamHealthRow[]>();
   const scores: number[] = [];
   for (const row of ingestStateResult.results ?? []) {
@@ -152,8 +161,8 @@ export async function computeDataHealth(env: Env): Promise<DataHealthResult> {
       consecutiveErrors: row.consecutive_errors,
       now
     });
-    scores.push(qualityScore);
     const sourceId = sourceIdFor(row.stream_id);
+    if (statusBySource.get(sourceId) !== "disabled") scores.push(qualityScore);
     const list = streamsBySource.get(sourceId) ?? [];
     list.push({
       stream_id: row.stream_id,
@@ -168,16 +177,26 @@ export async function computeDataHealth(env: Env): Promise<DataHealthResult> {
     streamsBySource.set(sourceId, list);
   }
 
-  const sources: SourceHealth[] = (dataSourcesResult.results ?? []).map((source) => ({
-    source_id: source.source_id,
-    name: source.name,
-    status: source.status,
-    streams: (streamsBySource.get(source.source_id) ?? []).sort((a, b) => a.stream_id.localeCompare(b.stream_id))
-  }));
+  const sources: SourceHealth[] = (dataSourcesResult.results ?? [])
+    .map((source) => ({
+      source_id: source.source_id,
+      name: source.name,
+      status: source.status,
+      streams: (streamsBySource.get(source.source_id) ?? []).sort((a, b) => a.stream_id.localeCompare(b.stream_id))
+    }))
+    // Disabled sources sink to the bottom so a permanently-retired source
+    // doesn't visually compete with ones that actually need attention.
+    .sort((a, b) => (a.status === "disabled" ? 1 : 0) - (b.status === "disabled" ? 1 : 0));
+
+  // Same reasoning as the score exclusion above: a disabled source's dq_issue
+  // (e.g. DQ-02 stale, permanently) is not something to act on today.
+  const openIssues = (recentIssuesResult.results ?? []).filter(
+    (issue) => statusBySource.get(sourceIdFor(issue.stream_id)) !== "disabled"
+  );
 
   return {
     overall_quality_score: scores.length > 0 ? scores.reduce((sum, s) => sum + s, 0) / scores.length : null,
     sources,
-    open_issues: recentIssuesResult.results ?? []
+    open_issues: openIssues
   };
 }

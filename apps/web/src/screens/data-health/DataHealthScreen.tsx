@@ -56,24 +56,42 @@ export function DataHealthScreen() {
       {error && <p className="text-reject">Data Healthの読み込みに失敗しました。</p>}
       {data && (
         <div className="space-y-3">
-          {data.sources.map((source) => (
-            <section key={source.source_id} className="rounded border border-slate-800 bg-slate-900 p-3">
-              <div className="mb-2 flex items-center gap-2">
-                <h2 className="text-sm font-medium">{source.name}</h2>
-                <span className="text-xs text-slate-500">{source.source_id}</span>
-                <span className="rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-400">{source.status}</span>
-              </div>
-              {source.streams.length === 0 ? (
-                <p className="text-xs text-slate-600">まだ収集が実行されていません</p>
-              ) : (
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {source.streams.map((stream) => (
-                    <StreamCell key={stream.stream_id} stream={stream} />
-                  ))}
+          {data.sources
+            .filter((s) => s.status !== "disabled")
+            .map((source) => (
+              <section key={source.source_id} className="rounded border border-slate-800 bg-slate-900 p-3">
+                <div className="mb-2 flex items-center gap-2">
+                  <h2 className="text-sm font-medium">{source.name}</h2>
+                  <span className="text-xs text-slate-500">{source.source_id}</span>
+                  <span className="rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-400">{source.status}</span>
                 </div>
-              )}
-            </section>
-          ))}
+                {source.streams.length === 0 ? (
+                  <p className="text-xs text-slate-600">まだ収集が実行されていません</p>
+                ) : (
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {source.streams.map((stream) => (
+                      <StreamCell key={stream.stream_id} stream={stream} />
+                    ))}
+                  </div>
+                )}
+              </section>
+            ))}
+          {data.sources.some((s) => s.status === "disabled") && (
+            <details className="rounded border border-slate-800 bg-slate-900/50 p-3">
+              <summary className="cursor-pointer text-xs text-slate-500">
+                無効化済みソース ({data.sources.filter((s) => s.status === "disabled").length}件、恒久停止 — 品質スコアに含まれません)
+              </summary>
+              <div className="mt-2 space-y-2">
+                {data.sources
+                  .filter((s) => s.status === "disabled")
+                  .map((source) => (
+                    <div key={source.source_id} className="text-xs text-slate-600">
+                      <span className="text-slate-400">{source.name}</span> ({source.source_id}) — {source.streams.length}ストリーム
+                    </div>
+                  ))}
+              </div>
+            </details>
+          )}
         </div>
       )}
       {data && data.open_issues.length > 0 && (
