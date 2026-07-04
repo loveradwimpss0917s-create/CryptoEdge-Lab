@@ -108,6 +108,20 @@ export interface RunSummary {
   metrics: { ev_bps: number | null; sharpe: number | null; dsr: number | null; p_perm: number | null };
 }
 
+// Paper タブ最小版 (docs/06 SCR-03, docs/15 SONNET-5).
+export interface PaperSignal {
+  signal_id: string;
+  status: "open" | "closed" | "expired" | "invalidated";
+  direction: string;
+  ts_signal: number;
+  ts_entry: number | null;
+  ts_exit: number | null;
+  entry_px: number | null;
+  exit_px: number | null;
+  ret_bps: number | null;
+  ret_net_bps: number | null;
+}
+
 export interface EdgeDetail {
   edge: EdgeSummary & {
     hypothesis: string;
@@ -118,6 +132,7 @@ export interface EdgeDetail {
   current_version: Record<string, unknown> | null;
   latest_verdict: Record<string, unknown> | null;
   runs: RunSummary[];
+  paper_signals: PaperSignal[];
 }
 
 export interface MarketSnapshot {

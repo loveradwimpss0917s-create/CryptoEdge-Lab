@@ -225,3 +225,19 @@ V1 完了後に、SONNET-1/6 で解除される DATA 待ちの状況と合わせ
   「品質スコア測定手段が無い」を解消
 - 品質スコアは docs/03 §6 の30日ローリング値の近似 (ingest_state に履歴が無いため、Readiness と
   同じ「都度計算・保存しない」方式)。typecheck/test/lint 全緑、本番デプロイ成功確認済み
+
+### SONNET-5 (完了): paper_signals writer
+
+- `workers/ingest/src/signals/paper-trading.ts` を実装し tick-5m に接続。docs/14 §6 が指摘した
+  「`paper_signals` に書き込み処理が存在しない」を解消 — PAPER→ACTIVE ゲート (docs/05 §2) が
+  構造的に満たせなかった問題への対応
+- V1 スコープ: `when` に feature (`cmp`) 参照が無い (event/regime/time のみ)、
+  `entry.delay_bars<=1`、固定 `exit: {horizon}` のみサポート。Feature Store の値は R2 Parquet
+  にしかなくこの Worker からライブ読み取りできないため — 該当しない Edge は毎tickスキップ
+  (ログのみ、フェイルクローズ、フォールバック値の捏造なし)
+- ret_bps/round-trip-cost の計算式は research/eval/backtest.py と同一 (PAPER と FULL の比較可能性
+  を保つ)。direction/horizon は edge_versions の列 (signal_spec 内の重複コピーではなく) を使用 —
+  on_demand.py の参照元と揃える
+- Edge Dossier に Paper タブ最小版 (`GET /edges/:id` の `paper_signals[]`) を追加
+- 本番にはまだ PAPER 状態の Edge が存在しないため、実データでの動作確認は未実施。単体テスト
+  (FakeD1 バックエンド、13件) で検証済み。typecheck/test/lint 全緑

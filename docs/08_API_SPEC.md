@@ -12,7 +12,7 @@
 |---|---|---|
 | GET `/edges` | 一覧。`?status=&category=&q=&sort=score` | Board 用。KV 60s |
 | POST `/edges` | 作成 (IDEA/CANDIDATE)。body: title, category, hypothesis, rationale, counter_evidence, evidence, origin, finding_id? | 遷移ガード適用 |
-| GET `/edges/{id}` | Dossier 集約 (edge + current version + 最新 verdict + 直近5件の run/verdict/`wf:oos`主要指標 `runs[]`、2026-07 レビュー Task 8) | KV 30s |
+| GET `/edges/{id}` | Dossier 集約 (edge + current version + 最新 verdict + 直近5件の run/verdict/`wf:oos`主要指標 `runs[]` + 直近20件の `paper_signals[]`、2026-07 レビュー Task 8、docs/15 SONNET-5) | KV 30s |
 | PATCH `/edges/{id}` | thesis 系フィールド更新のみ (status は不可) | |
 | POST `/edges/{id}/transitions` | 状態遷移。body: to_status, reason。ガード違反 409 | audit 記録 |
 | GET `/edges/{id}/versions` / POST 同 | バージョン一覧 / 新バージョン作成 (signal_spec は DSL 検証) | 不変 |

@@ -9,6 +9,7 @@ import { enqueueIngestTask, touchIngestState, recordStreamError } from "./db.js"
 import { checkAndEscalate } from "./quality/consecutive-errors.js";
 import { checkQuotaThresholds } from "./quality/quota-alert.js";
 import { streamsForTier, tiersForTick, type Tier } from "./schedule.js";
+import { runPaperTrading } from "./signals/paper-trading.js";
 import { drainRetryQueue } from "./tasks.js";
 import { notifyTelegram } from "./notify/telegram.js";
 
@@ -81,6 +82,15 @@ async function handleTick(
     failed += result.failed;
   }
   /* eslint-enable no-await-in-loop */
+
+  // docs/14 §6 / docs/15 SONNET-5: PAPER-status Edges' paper_signals writer.
+  // Runs every tick-5m regardless of which tiers fired this time -- paper
+  // trading is time-sensitive in a way the daily/weekly research dispatch
+  // below is not. Must never fail the tick (candle-less instrument, a
+  // malformed signal_spec, etc. are all recoverable next tick).
+  await runPaperTrading(env).catch(() => {
+    /* paper trading failures must never fail the tick */
+  });
 
   if (failed > 0 && env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
     await notifyTelegram(

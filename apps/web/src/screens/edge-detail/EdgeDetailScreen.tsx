@@ -1,14 +1,12 @@
-// SCR-03 Edge Dossier (docs/06 §3). V1 slice: Thesis + a flat 評価履歴
-// (run/verdict/wf:oos指標) section, not the full tabbed Evidence/Runs/
-// Paper/Versions/Related layout — Paper/Versions/Related still need
-// paper_signals data that only exists once EEP runs have executed against
-// seeded Edges (docs/09 P0 "全 tier の収集が7日間無人で稼働"). 評価履歴は
-// 2026-07 レビュー Task 8 で追加。
+// SCR-03 Edge Dossier (docs/06 §3). V1 slice: Thesis + 評価履歴
+// (run/verdict/wf:oos指標) + Paper タブ最小版 (paper_signals一覧, docs/15
+// SONNET-5) — Versions/Related タブはまだ実装せず。評価履歴は 2026-07
+// レビュー Task 8 で追加。
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { EDGE_TRANSITION_GRAPH, type EdgeStatus } from "@cryptoedge/schema";
-import { api, type RunSummary, type Readiness } from "../../api/client";
+import { api, type PaperSignal, type RunSummary, type Readiness } from "../../api/client";
 import { formatUtcTimestamp } from "../../lib/format";
 import {
   missingElementsSummary,
@@ -88,6 +86,34 @@ function RunHistoryEntry({ run }: { run: RunSummary }) {
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+const PAPER_SIGNAL_STATUS_LABEL: Record<PaperSignal["status"], string> = {
+  open: "オープン中",
+  closed: "決済済み",
+  expired: "期限切れ",
+  invalidated: "無効化"
+};
+
+// Paper タブ最小版 (docs/06 SCR-03, docs/15 SONNET-5): paper_signals writer
+// (workers/ingest/src/signals/paper-trading.ts) が記録した発火・決済履歴。
+function PaperSignalEntry({ signal }: { signal: PaperSignal }) {
+  return (
+    <div className="space-y-1 border-t border-slate-800 pt-3 text-xs first:border-t-0 first:pt-0">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded bg-slate-800 px-2 py-0.5 font-medium text-slate-300">
+          {PAPER_SIGNAL_STATUS_LABEL[signal.status]}
+        </span>
+        <span className="text-slate-500">{signal.direction}</span>
+        <span className="text-slate-600">{formatUtcTimestamp(signal.ts_signal)}</span>
+      </div>
+      {signal.ret_net_bps !== null && (
+        <div className={signal.ret_net_bps >= 0 ? "text-adopt" : "text-reject"}>
+          net {signal.ret_net_bps.toFixed(1)}bps (gross {signal.ret_bps?.toFixed(1) ?? "—"}bps)
+        </div>
       )}
     </div>
   );
@@ -230,6 +256,15 @@ export function EdgeDetailScreen() {
           <h2 className="text-sm font-medium text-slate-400">評価履歴 (直近{data.runs.length}件)</h2>
           {data.runs.map((run) => (
             <RunHistoryEntry key={run.run_id} run={run} />
+          ))}
+        </section>
+      )}
+
+      {data.paper_signals.length > 0 && (
+        <section className="space-y-3 rounded border border-slate-800 bg-slate-900 p-4">
+          <h2 className="text-sm font-medium text-slate-400">Paper (直近{data.paper_signals.length}件)</h2>
+          {data.paper_signals.map((signal) => (
+            <PaperSignalEntry key={signal.signal_id} signal={signal} />
           ))}
         </section>
       )}

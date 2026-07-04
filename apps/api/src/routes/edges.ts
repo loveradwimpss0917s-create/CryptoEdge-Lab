@@ -140,15 +140,42 @@ edgesRoute.get("/:id", async (c) => {
     : null;
 
   const runs = version ? await fetchRecentRuns(c.env, version["version_id"] as string) : [];
+  const paperSignals = version ? await fetchRecentPaperSignals(c.env, version["version_id"] as string) : [];
   const readinessByEdge = await computeReadinessForEdges(c.env, [edge]);
 
   return c.json({
     edge: { ...edge, readiness: readinessByEdge.get(edgeId) ?? null },
     current_version: version ?? null,
     latest_verdict: latestVerdict ?? null,
-    runs
+    runs,
+    paper_signals: paperSignals
   });
 });
+
+// Paper タブ最小版 (docs/06 SCR-03, docs/15 SONNET-5):直近のpaper_signals実績。
+// PAPER->ACTIVE ゲート (docs/05 §2, edge-lifecycle.ts) が読む行と同じ実データ。
+interface PaperSignalRow {
+  signal_id: string;
+  status: string;
+  direction: string;
+  ts_signal: number;
+  ts_entry: number | null;
+  ts_exit: number | null;
+  entry_px: number | null;
+  exit_px: number | null;
+  ret_bps: number | null;
+  ret_net_bps: number | null;
+}
+
+async function fetchRecentPaperSignals(env: Env, edgeVersionId: string): Promise<PaperSignalRow[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT signal_id, status, direction, ts_signal, ts_entry, ts_exit, entry_px, exit_px, ret_bps, ret_net_bps
+     FROM paper_signals WHERE edge_version_id = ?1 ORDER BY ts_signal DESC LIMIT 20`
+  )
+    .bind(edgeVersionId)
+    .all<PaperSignalRow>();
+  return results ?? [];
+}
 
 // 評価履歴 (2026-07 レビュー Task 8): Edge Dossier に直近の run/verdict/主要
 // OOS 指標をまとめて返す。1 run あたり verdict + metrics の2クエリだが、

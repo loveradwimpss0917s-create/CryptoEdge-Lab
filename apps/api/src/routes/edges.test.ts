@@ -88,6 +88,35 @@ describe("GET /edges/:id runs (2026-07 review Task 8)", () => {
   });
 });
 
+describe("GET /edges/:id paper_signals (docs/15 SONNET-5 Paper タブ最小版)", () => {
+  it("returns an empty array when nothing has fired yet", async () => {
+    await seedEdgeWithVersion(env);
+    const res = await edgesRoute.request("/e1", {}, env);
+    const body = (await res.json()) as { paper_signals: unknown[] };
+    expect(body.paper_signals).toEqual([]);
+  });
+
+  it("returns up to 20 recent paper_signals, newest first", async () => {
+    await seedEdgeWithVersion(env);
+    await env.DB.prepare(
+      `INSERT INTO paper_signals (signal_id, edge_version_id, status, direction, ts_signal, ts_entry, ts_exit, entry_px, exit_px, ret_bps, ret_net_bps, trigger_snapshot)
+       VALUES ('s1', 'v1', 'closed', 'long', 1000, 1000, 2000, 100, 101, 100, 88, '{}')`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO paper_signals (signal_id, edge_version_id, status, direction, ts_signal, ts_entry, entry_px, trigger_snapshot)
+       VALUES ('s2', 'v1', 'open', 'long', 3000, 3000, 102, '{}')`
+    ).run();
+
+    const res = await edgesRoute.request("/e1", {}, env);
+    const body = (await res.json()) as {
+      paper_signals: { signal_id: string; status: string; ret_bps: number | null }[];
+    };
+    expect(body.paper_signals).toHaveLength(2);
+    expect(body.paper_signals[0]!.signal_id).toBe("s2"); // newest first
+    expect(body.paper_signals[1]).toMatchObject({ signal_id: "s1", status: "closed", ret_bps: 100 });
+  });
+});
+
 describe("POST /edges/:id/eval (evaluation trigger)", () => {
   it("returns 404 for an unknown edge", async () => {
     const res = await edgesRoute.request(

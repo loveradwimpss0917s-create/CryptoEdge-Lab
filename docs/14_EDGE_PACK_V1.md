@@ -387,6 +387,8 @@
 
 これは監査ロードマップの**TASK-6 (paper trading配線, W8-9, 未着手)** そのものである。Edge Pack v1のどのEdgeも、TASK-6が実装されない限りACTIVEへ到達できない。
 
+**実装状況 (docs/15 SONNET-5, 2026-07)**: `paper_signals`のwriter (`workers/ingest/src/signals/paper-trading.ts`) を実装済み。tick-5m毎にPAPER状態Edgeのcurrent_versionを評価し、`when`成立時に発火・エントリー、horizon経過後に決済して`ret_bps`/`ret_net_bps`を記録する。ただしV1スライス: `cmp`(feature参照)を含む`when`、`entry.delay_bars>1`、`exit.cond`可変終了は未対応 (Feature Storeのライブ読み取り手段が無いため、docs/15 §4参照)。本番にはまだPAPER状態のEdgeが存在しないため、実データでの動作確認は未実施 (単体テストで検証済み)。
+
 ### 6.3 Edge Pack v1 実行順序への影響
 
 Edge Pack v1 (本計画) は「IDEA→CANDIDATE→TESTING→VALIDATED」までを対象とし、**PAPER以降はTASK-6完了後に自然に接続される設計**とする。具体的には:
