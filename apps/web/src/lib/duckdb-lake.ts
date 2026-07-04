@@ -10,27 +10,44 @@
 // downloading the whole file.
 
 import * as duckdb from "@duckdb/duckdb-wasm";
-import duckdbWasmMvp from "@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm?url";
-import duckdbWorkerMvp from "@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url";
-import duckdbWasmEh from "@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url";
-import duckdbWorkerEh from "@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url";
 
 let dbPromise: Promise<duckdb.AsyncDuckDB> | undefined;
 
-// Lazily instantiated once per page load, only when the Explorer tab is
-// actually opened -- nothing to spin up server-side either way.
+// DuckDB-WASM's wasm binaries (30MB+ uncompressed) exceed Cloudflare
+// Workers' 25 MiB static-asset limit, so they can't ship in our own
+// dist/ -- loaded from jsdelivr's CDN at runtime instead, same as any
+// other duckdb-wasm consumer app. The worker script is cross-origin, so
+// it's wrapped in a same-origin blob that `importScripts` it (the
+// standard duckdb-wasm pattern for CDN-hosted bundles).
 function getDb(): Promise<duckdb.AsyncDuckDB> {
   dbPromise ??= (async () => {
-    const bundles: duckdb.DuckDBBundles = {
-      mvp: { mainModule: duckdbWasmMvp, mainWorker: duckdbWorkerMvp },
-      eh: { mainModule: duckdbWasmEh, mainWorker: duckdbWorkerEh }
-    };
-    const bundle = await duckdb.selectBundle(bundles);
-    const worker = new Worker(bundle.mainWorker!);
-    const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
-    const db = new duckdb.AsyncDuckDB(logger, worker);
-    await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-    return db;
+    try {
+      const bundles = duckdb.getJsDelivrBundles();
+      const bundle = await duckdb.selectBundle(bundles);
+      const workerUrl = URL.createObjectURL(
+        new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" })
+      );
+      const worker = new Worker(workerUrl);
+      // A failed CDN fetch inside the worker (e.g. importScripts 404/network
+      // error) surfaces as an uncaught worker error, not a rejection of
+      // instantiate() below -- without this race, that failure mode hangs
+      // forever instead of reporting an error.
+      const workerError = new Promise<never>((_, reject) => {
+        worker.addEventListener(
+          "error",
+          (e) => reject(new Error(e.message || "DuckDB worker failed to load")),
+          { once: true }
+        );
+      });
+      const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
+      const db = new duckdb.AsyncDuckDB(logger, worker);
+      await Promise.race([db.instantiate(bundle.mainModule, bundle.pthreadWorker), workerError]);
+      URL.revokeObjectURL(workerUrl);
+      return db;
+    } catch (e) {
+      dbPromise = undefined;
+      throw e;
+    }
   })();
   return dbPromise;
 }

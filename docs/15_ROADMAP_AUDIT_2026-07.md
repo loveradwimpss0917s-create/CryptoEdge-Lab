@@ -302,4 +302,19 @@ V1 完了後に、SONNET-1/6 で解除される DATA 待ちの状況と合わせ
 - 検証中に見つけたバグを修正: データセット選択時のエラー (`queryError`) が `columns` 存在時のみ
   レンダーされる条件分岐の内側にあり、選択直後に失敗すると画面が無反応に見えた。トップレベルにも
   エラー表示を追加して修正
+- **本番デプロイ失敗と修正 (重要)**: 初回実装 (`910590b`) は duckdb-wasm の wasm/worker ファイルを
+  Vite の `?url` インポートで自前 `dist/` にバンドルしていたが、`duckdb-eh.wasm` (32.7MB) が
+  Cloudflare Workers の Static Assets サイズ上限 (25 MiB/ファイル) を超え、`wrangler deploy` 自体が
+  `Asset too large` で失敗 (deploy.yml run 28723059142 で発見)。`wrangler deploy` はアトミックなため
+  本番は旧バージョンのまま無事だったが、api Worker の新バージョンは一切ロールアウトされていなかった。
+  `duckdb.getJsDelivrBundles()` (jsdelivr CDN からの動的ロード、公式ヘルパー) に切り替えて修正 —
+  これで `dist/` は 2.6MB に収まる。worker スクリプトがクロスオリジンになるため
+  `importScripts` する same-origin blob 経由で `new Worker()` する標準パターンを使用
+- この修正の検証中にもう一件バグを発見: worker 内で `importScripts` が失敗すると
+  `AsyncDuckDB.instantiate()` の Promise が解決も拒否もされず (uncaught worker error のため)、
+  UI が「読み込み中…」のまま無限にハングしていた。`Promise.race` で worker の `error` イベントを
+  監視し拒否させることで修正 — ネットワーク遮断・CDN障害など実運用でも起こりうる失敗モードなので
+  サンドボックス限定の問題ではない
+- 上記2件の修正後、typecheck/lint/test (api・web) 全緑、`vite build` 出力サイズ 2.6MB を再確認。
+  ブラウザ実機再検証でも、CDN到達不能時にエラーが正しく表示されることを確認 (無限ハングの解消)
 - typecheck/lint/test (api・web) 全緑、`vite build` 本番ビルドも成功確認済み
