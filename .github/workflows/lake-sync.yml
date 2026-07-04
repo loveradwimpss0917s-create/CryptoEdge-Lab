@@ -37,3 +37,7 @@ jobs:
       - run: uv sync
       - name: R2 lake sync (historical backfill + D1 mirror + regimes + snapshot manifest)
         run: uv run python -m cryptoedge_research.jobs.lake_sync
+      # Feature Store v1 (docs/04 §3, 2026-07 review TASK-2): needs candles
+      # already in R2, so it runs after lake_sync, not standalone.
+      - name: Feature Store sync (price-only v1 features)
+        run: uv run python -m cryptoedge_research.jobs.features_sync

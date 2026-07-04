@@ -8,6 +8,7 @@ import {
   jobStatusUpdateSchema,
   startRunRequestSchema,
   submitCorrelationsRequestSchema,
+  submitFeatureDefsRequestSchema,
   submitFindingsRequestSchema,
   submitMetricsRequestSchema,
   submitRegimesRequestSchema,
@@ -282,6 +283,28 @@ internalRoute.post("/findings", async (c) => {
     )
   );
   return c.json({ written: body.findings.length }, 201);
+});
+
+// Feature Store v1 ledger (docs/02 §feature_defs, docs/04 §3.1, 2026-07
+// design audit TASK-2): the feature *values* live in R2 Parquet
+// (jobs/features_sync.py), this just registers what exists so it's
+// traceable/reproducible from spec.
+internalRoute.post("/feature-defs", async (c) => {
+  const body = submitFeatureDefsRequestSchema.parse(await c.req.json());
+  const stmt = c.env.DB.prepare(
+    `INSERT INTO feature_defs (feature_id, version, spec, cadence, lookback_required, family, status, created_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7)
+     ON CONFLICT (feature_id) DO UPDATE SET
+       version = excluded.version, spec = excluded.spec, cadence = excluded.cadence,
+       lookback_required = excluded.lookback_required, family = excluded.family`
+  );
+  const now = Date.now();
+  await c.env.DB.batch(
+    body.feature_defs.map((f) =>
+      stmt.bind(f.feature_id, f.version, JSON.stringify(f.spec), f.cadence, f.lookback_required ?? null, f.family, now)
+    )
+  );
+  return c.json({ written: body.feature_defs.length }, 201);
 });
 
 internalRoute.post("/regimes", async (c) => {

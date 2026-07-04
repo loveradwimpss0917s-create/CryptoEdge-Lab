@@ -36,7 +36,8 @@ from cryptoedge_research.io.internal_client import (
     SubmitVerdictRequest,
     VerdictReason,
 )
-from cryptoedge_research.io.lake import read_candles, read_dataset_hash
+from cryptoedge_research.io.lake import read_candles, read_dataset_hash, read_parquet
+from cryptoedge_research.jobs.features_sync import FEATURE_SET_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -297,6 +298,18 @@ def main() -> int:
 
         instrument_id = edge_version["instrument_id"]
         price_df = read_candles(instrument_id, "1h")
+        # Feature Store v1 (docs/04 §3, 2026-07 review TASK-2): left-joined
+        # onto the bar series by ts so signal_specs can reference these
+        # feature names directly, same as any other price_df column. A
+        # missing features file (jobs/features_sync.py hasn't run yet for
+        # this instrument) just means no v1 features are available — the
+        # existing missing-feature check in run_eep_for_edge_version
+        # already fails the job cleanly if a signal_spec needed one.
+        try:
+            features_df = read_parquet(f"features/{FEATURE_SET_VERSION}/{instrument_id}/1h/data.parquet")
+            price_df = price_df.merge(features_df, on="ts", how="left")
+        except OSError:
+            pass
         bar_interval_ms = 3_600_000
         events = (
             client.get_events(int(price_df["ts"].min()), int(price_df["ts"].max()) + bar_interval_ms)

@@ -83,6 +83,7 @@
 | POST `/internal/runs/{id}/verdict` | verdict 投入 → 遷移提案を actions へ |
 | POST `/internal/findings` | discovery_findings バルク投入 |
 | POST `/internal/regimes` | regimes_daily 更新 |
+| POST `/internal/feature-defs` | feature_defs 台帳更新 (実値は R2、docs/04 §3.1、2026-07 レビュー TASK-2 Feature Store v1) |
 | POST `/internal/correlations` | edge_correlations 更新 |
 | POST `/internal/briefing-ready` | nightly 完了通知 → AI ブリーフィング生成をトリガ |
 

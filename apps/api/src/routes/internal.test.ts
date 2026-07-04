@@ -86,6 +86,57 @@ describe("GET /internal/regimes (2026-07 review, TASK-1)", () => {
   });
 });
 
+describe("POST /internal/feature-defs (2026-07 review, TASK-2)", () => {
+  it("upserts feature_defs, spec as JSON, and is idempotent on re-registration", async () => {
+    const res = await internalRoute.request(
+      "/feature-defs",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          feature_defs: [
+            {
+              feature_id: "v1.ret_24h",
+              version: 1,
+              spec: { base: "close", feature_set_version: "v1" },
+              cadence: "1h",
+              lookback_required: "24bars",
+              family: "price"
+            }
+          ]
+        })
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { written: number };
+    expect(body.written).toBe(1);
+
+    const row = await env.DB.prepare(`SELECT spec, family, status FROM feature_defs WHERE feature_id = 'v1.ret_24h'`)
+      .first<{ spec: string; family: string; status: string }>();
+    expect(JSON.parse(row!.spec)).toEqual({ base: "close", feature_set_version: "v1" });
+    expect(row!.family).toBe("price");
+    expect(row!.status).toBe("active");
+
+    // Re-registering (e.g. next week's sync run) must not fail on the PK.
+    const res2 = await internalRoute.request(
+      "/feature-defs",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          feature_defs: [
+            { feature_id: "v1.ret_24h", version: 2, spec: { base: "close" }, cadence: "1h", family: "price" }
+          ]
+        })
+      },
+      env
+    );
+    expect(res2.status).toBe(201);
+    const updated = await env.DB.prepare(`SELECT version FROM feature_defs WHERE feature_id = 'v1.ret_24h'`)
+      .first<{ version: number }>();
+    expect(updated!.version).toBe(2);
+  });
+});
+
 describe("GET /internal/edges/:id/trial-count", () => {
   it("returns 0 for an edge with no runs yet", async () => {
     const res = await internalRoute.request("/edges/e1/trial-count", {}, env);

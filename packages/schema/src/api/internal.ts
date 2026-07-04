@@ -113,6 +113,25 @@ export const submitRegimesRequestSchema = z.object({
 });
 export type SubmitRegimesRequest = z.infer<typeof submitRegimesRequestSchema>;
 
+// feature_defs is the D1 ledger for R2 `features/{feature_set_version}/`
+// Parquet (docs/02 §feature_defs, docs/04 §3.1): every feature is
+// registered here so it's traceable/reproducible, even though the values
+// themselves live in R2 (2026-07 design audit TASK-2, Feature Store v1).
+export const featureDefInputSchema = z.object({
+  feature_id: z.string().min(1),
+  version: z.number().int(),
+  spec: z.record(z.string(), z.unknown()),
+  cadence: z.string().min(1),
+  lookback_required: z.string().nullable().optional(),
+  family: z.string().min(1)
+});
+export type FeatureDefInput = z.infer<typeof featureDefInputSchema>;
+
+export const submitFeatureDefsRequestSchema = z.object({
+  feature_defs: z.array(featureDefInputSchema).min(1)
+});
+export type SubmitFeatureDefsRequest = z.infer<typeof submitFeatureDefsRequestSchema>;
+
 export const correlationUpdateInputSchema = z.object({
   edge_a: z.string().min(1),
   edge_b: z.string().min(1),

@@ -114,6 +114,21 @@ def read_candles(instrument_id: str, tf: str) -> pd.DataFrame:
     return df.sort_values("ts").reset_index(drop=True)
 
 
+def read_parquet(key: str) -> pd.DataFrame:
+    """Reads an arbitrary Parquet object at `key` (e.g. Feature Store
+    output, `jobs/features_sync.py`) — unlike `read_candles`, which is
+    hardcoded to the candles layout. Raises `OSError` (or a pyarrow
+    subclass of it, both locally and against R2) if `key` doesn't exist,
+    same as `read_candles`."""
+    local_root = _local_root()
+    if local_root is not None:
+        return pq.read_table(local_root / key).to_pandas()
+
+    endpoint, bucket = _r2_config()
+    s3 = _s3_filesystem(endpoint)
+    return pq.read_table(f"{bucket}/{key}", filesystem=s3).to_pandas()
+
+
 def write_parquet(key: str, df: pd.DataFrame) -> None:
     """Writes `df` to R2 (or the local dev root) at `key`, relative to the
     lake root — e.g. `backups/d1/2026-07-05/edges.parquet` (docs/12 §3).

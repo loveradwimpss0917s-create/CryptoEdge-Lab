@@ -65,6 +65,15 @@ class DiscoveryFindingInput(BaseModel):
     novelty: float | None = None
 
 
+class FeatureDefInput(BaseModel):
+    feature_id: str
+    version: int
+    spec: dict[str, Any]
+    cadence: str
+    lookback_required: str | None = None
+    family: str
+
+
 class RegimeUpdateInput(BaseModel):
     dt: str
     trend: Literal["up", "down", "range"]
@@ -179,6 +188,12 @@ class InternalApiClient:
 
     def submit_findings(self, findings: list[DiscoveryFindingInput]) -> int:
         result = self._post("/internal/findings", {"findings": [f.model_dump(mode="json") for f in findings]})
+        return result["written"]
+
+    def submit_feature_defs(self, feature_defs: list[FeatureDefInput]) -> int:
+        result = self._post(
+            "/internal/feature-defs", {"feature_defs": [f.model_dump(mode="json") for f in feature_defs]}
+        )
         return result["written"]
 
     def submit_regimes(self, regimes: list[RegimeUpdateInput]) -> int:
