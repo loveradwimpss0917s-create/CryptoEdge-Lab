@@ -148,12 +148,24 @@ docs/14 (Edge Pack v1) のフェーズ計画との接続も明記する。
   PAPER 状態 Edge の current version の when 成立時に `paper_signals` へ記録。約定/リターン確定はフォローアップ ジョブ
 - 受入条件: PAPER に遷移させたテスト Edge でシグナル行が書かれること。Dossier に Paper タブ最小版
 
-### SONNET-6 (P1): 残アダプタ + econ_calendar 実データ
+### SONNET-6 (P1): 残アダプタ + econ_calendar 実データ — 部分完了 (2026-07)
 
-- 内容: fred / defillama / farside_etf / coinbase (spot 参照値) / coinmetrics_community / tronscan (USDT mint 補完) を
-  アダプタ規約どおり追加 (履歴バックフィルは research 側ジョブで)。econ_calendar に FOMC/CPI/NFP/PPI の
-  検証済み日付を投入 (公式ソースから。docs/14 Phase 3 のブロッカー解除)
-- 受入条件: 各テーブルにデータが入り Data Health (SONNET-4) で品質スコアが見えること
+- **完了**: `ECON_CALENDAR` に 2026 FOMC 8件を投入 (WebSearch で複数独立ソースを突き合わせ、
+  全て一致する日付のみ採用)。docs/14 Phase 3 の pre-fomc-drift / sell-the-news-fomc-drift の
+  ブロッカーを解除。CPI/NFP/PPI は BLS の年間全日程をこの環境から検証できなかったため
+  (2ヶ月分のみ確認) 意図的に空のまま — 捏造しない方針を優先
+- **未着手** (この回では見送り、理由を明記): fred / defillama / farside_etf / coinbase /
+  coinmetrics_community / tronscan の6アダプタ。理由: (1) このサンドボックス環境は任意ホストへの
+  外向きネットワークがプロキシで遮断されており (`curl` で `stablecoins.llama.fi` 等も403)、
+  実際の応答スキーマを事前検証できない — OKX (SONNET-1) で2回連続、本番tickで初めて判明した
+  スキーマ不一致 (`instId`→`instFamily`、`details`省略) を踏まえると、6本を未検証のまま一度に
+  投入するのは本番での連鎖的な障害リスクが高い。(2) fred/tronscan はAPIキーが必要で
+  このセッションには設定されていない。(3) farside_etf はHTMLスクレイピングで実装コストが大きい。
+  (4) coinmetrics_community は約40系列と規模が大きい。
+- **次アクション**: 6アダプタは1本ずつ個別タスクとして着手し、デプロイ後の本番tickで
+  スキーマを検証・修正するサイクル (OKXで確立した手順) を踏む方が安全。次点候補は defillama
+  (キー不要、`stable.usdt_mcap`/`stable.total_stable_mcap` の metric_defs は既に登録済み)
+- 受入条件 (未達成分): 各テーブルにデータが入り Data Health (SONNET-4) で品質スコアが見えること
 
 ### SONNET-7 (P1): Today 完成 (Action Queue + テンプレブリーフィング表示)
 

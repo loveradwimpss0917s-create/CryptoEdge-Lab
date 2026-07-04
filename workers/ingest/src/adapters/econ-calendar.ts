@@ -24,7 +24,25 @@ export interface EconCalendarEntry {
 }
 
 export const ECON_CALENDAR: EconCalendarEntry[] = [
-  // Populate from official sources -- see module docstring above.
+  // FOMC 2026 (docs/15 SONNET-6, 2026-07): the decision/announcement day
+  // (day 2 of each 2-day meeting) -- cross-verified against the Fed's own
+  // per-meeting press-conference pages and multiple independent secondary
+  // calendars (fedratecalc.com, MEXC, financecalendar.com, Yahoo Finance),
+  // all agreeing on the same 8 dates.
+  { eventType: "fomc", date: "2026-01-28" },
+  { eventType: "fomc", date: "2026-03-18" },
+  { eventType: "fomc", date: "2026-04-29" },
+  { eventType: "fomc", date: "2026-06-17" },
+  { eventType: "fomc", date: "2026-07-29" },
+  { eventType: "fomc", date: "2026-09-16" },
+  { eventType: "fomc", date: "2026-10-28" },
+  { eventType: "fomc", date: "2026-12-09" }
+  // cpi_release/nfp_release/ppi_release: NOT populated yet -- only 2 of 12
+  // 2026 CPI release dates could be cross-verified from this environment
+  // (no direct fetch access to bls.gov's full published schedule), and
+  // this list deliberately does not fabricate the rest (see module
+  // docstring). Populate once the complete bls.gov/schedule/2026 calendar
+  // can be confirmed.
 ];
 
 const STREAM_ID = "econ_calendar:macro_events";

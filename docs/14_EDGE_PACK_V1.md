@@ -277,6 +277,12 @@
 
 前提: `workers/ingest/src/adapters/econ-calendar.ts` の `ECON_CALENDAR` 配列に、federalreserve.gov (FOMC) / bls.gov (CPI/PPI) の公式日程を投入する。**コード変更は不要、データ投入のみ**。
 
+**実装状況 (docs/15 SONNET-6, 2026-07)**: FOMC 2026 の8件は投入済み — pre-fomc-drift/
+sell-the-news-fomc-drift のイベントデータ自体は揃った。ただし pre-fomc-drift 側の
+`delay_bars: -24` (負の遅延) が評価器で実際にサポートされているかは未確認のまま
+(下記の注意点も参照)。cpi-macro-print-volatility-compression が使う `cpi_release` は
+BLS の年間全日程を検証できず未投入。
+
 #### 4.10 pre-fomc-drift
 ```json
 {
