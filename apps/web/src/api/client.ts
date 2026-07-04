@@ -207,6 +207,15 @@ export interface ActionItem {
   detail: string;
 }
 
+// Lake catalog (docs/08 "Lake パススルー", docs/15 SONNET-8). Parquet bytes
+// themselves are read directly by DuckDB-WASM from /api/v1/lake/{key}
+// (apps/web/src/lib/duckdb-lake.ts), not through this JSON client.
+export interface LakeCatalogEntry {
+  key: string;
+  size: number;
+  uploaded: string;
+}
+
 export const api = {
   listEdges: (params?: { status?: string; category?: string; q?: string }) => {
     const qs = new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v) as string[][]);
@@ -230,6 +239,7 @@ export const api = {
   getLatestPack: (kind: string) => request<PackContent>(`/packs/${kind}/latest`),
   dataHealth: () => request<DataHealth>("/data-health"),
   actionQueue: () => request<{ items: ActionItem[] }>("/actions"),
+  lakeCatalog: () => request<{ datasets: LakeCatalogEntry[] }>("/lake/catalog"),
   createEdge: (body: CreateEdgeRequest) =>
     request<{ edge_id: string; slug: string; status: string }>("/edges", {
       method: "POST",

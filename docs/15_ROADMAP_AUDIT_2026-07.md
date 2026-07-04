@@ -281,3 +281,25 @@ V1 完了後に、SONNET-1/6 で解除される DATA 待ちの状況と合わせ
   `computeDataHealth` は disabled ソースのストリームを `overall_quality_score` と `open_issues` から
   除外 (ストリーム自体は「無効化済みソース」として折りたたみ表示に残す)。Data Health 画面も
   disabled ソースを下部の折りたたみへ分離。api 74テスト・typecheck/lint 全緑
+
+### SONNET-8 (完了): Explorer 最小版 (DuckDB-WASM)
+
+- バックエンド: `apps/api/src/routes/lake.ts` — `GET /api/v1/lake/catalog` (curated/・features/ 配下の
+  R2 キー一覧) と `GET /api/v1/lake/*` (Range リクエスト対応の R2 パススルー、immutable キャッシュ)。
+  docs/08 の事前設計どおり。api 79テスト (新規5件)・typecheck/lint 全緑
+- フロントエンド: `@duckdb/duckdb-wasm` を追加し `apps/web/src/lib/duckdb-lake.ts` でブラウザ内
+  DuckDB を初期化。`ExplorerScreen` はカタログからデータセットを選択 → `DESCRIBE` で列一覧取得 →
+  WHERE句 (自由記述SQL) + 分布を見る列を指定 → 件数/min/max/avg/stddev + ヒストグラムを描画。
+  すべてクライアント側で完結 (docs/01 §3.3)。router/nav に `/explorer` を追加
+- ブラウザ実機検証: `wrangler dev --local` (ローカルD1/R2) + `vite dev` + Playwright (Chromium) で
+  実施。カタログ取得→データセット選択→DuckDB-WASM初期化 (worker生成・wasmインスタンス化) →
+  `read_parquet` 呼び出しまでは実機で確認できたが、DuckDB-WASM 1.x は `parquet` エクステンションを
+  `extensions.duckdb.org` からオンデマンドで取得する設計のため、**このサンドボックスの outbound
+  プロキシがそのホスト (および cdn.jsdelivr.net・unpkg.com のミラーも含め) を 403 でブロックする**
+  ことが判明 (`curl --proxy` で個別確認済み)。これはサンドボックス固有のネットワーク制限であり、
+  実際のユーザーブラウザ (無制限のインターネットアクセスを持つ) では標準的な duckdb-wasm 統合と
+  同様に動作するはずだが、この環境内では Parquet の実データ読み取りまでは確認できていない
+- 検証中に見つけたバグを修正: データセット選択時のエラー (`queryError`) が `columns` 存在時のみ
+  レンダーされる条件分岐の内側にあり、選択直後に失敗すると画面が無反応に見えた。トップレベルにも
+  エラー表示を追加して修正
+- typecheck/lint/test (api・web) 全緑、`vite build` 本番ビルドも成功確認済み

@@ -4,6 +4,7 @@ import { TodayScreen } from "../screens/today/TodayScreen";
 import { EdgeBoardScreen } from "../screens/edge-board/EdgeBoardScreen";
 import { EdgeDetailScreen } from "../screens/edge-detail/EdgeDetailScreen";
 import { DataHealthScreen } from "../screens/data-health/DataHealthScreen";
+import { ExplorerScreen } from "../screens/explorer/ExplorerScreen";
 
 const rootRoute = createRootRoute({ component: Layout });
 
@@ -41,7 +42,13 @@ const dataHealthRoute = createRoute({
   component: DataHealthScreen
 });
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, edgeDetailRoute, dataHealthRoute]);
+const explorerRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/explorer",
+  component: ExplorerScreen
+});
+
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, edgeDetailRoute, dataHealthRoute, explorerRoute]);
 
 export const router = createRouter({ routeTree });
 

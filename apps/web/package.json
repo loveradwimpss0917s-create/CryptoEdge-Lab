@@ -16,7 +16,9 @@
     "react-dom": "^18.3.1",
     "@tanstack/react-router": "^1.95.0",
     "@tanstack/react-query": "^5.62.0",
-    "@cryptoedge/schema": "workspace:*"
+    "@cryptoedge/schema": "workspace:*",
+    "@duckdb/duckdb-wasm": "^1.32.0",
+    "apache-arrow": "^17.0.0"
   },
   "devDependencies": {
     "@cryptoedge/config": "workspace:*",

@@ -3,7 +3,8 @@ import { Link, Outlet } from "@tanstack/react-router";
 const NAV = [
   { to: "/" as const, label: "今日" },
   { to: "/board" as const, label: "ボード" },
-  { to: "/data-health" as const, label: "Data Health" }
+  { to: "/data-health" as const, label: "Data Health" },
+  { to: "/explorer" as const, label: "Explorer" }
 ];
 
 export function Layout() {
