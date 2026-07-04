@@ -5,11 +5,96 @@
 // yet in this pass (docs/09 P2).
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { EDGE_STATUSES, READINESS_STATES, type ReadinessState } from "@cryptoedge/schema";
+import { createEdgeRequestSchema, EDGE_STATUSES, READINESS_STATES, type ReadinessState } from "@cryptoedge/schema";
 import { api, type EdgeSummary } from "../../api/client";
 import { nextActionLabel, READINESS_STATE_BADGE_CLASS, READINESS_STATE_LABEL, STATUS_LABEL } from "../../lib/labels";
+
+// AIからの貼り戻し (docs/07 §2 双方向スキーマ, docs/15 SONNET-2 V1 slice):
+// literature_import Pack が指示する JSON 形式は既存の createEdgeRequestSchema
+// と同一なので、新しいバックエンドエンドポイントは不要 — 貼り付け内容を
+// zod検証してそのまま POST /edges へ渡すだけで貼り戻しが成立する。
+function LiteratureImportForm() {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [errors, setErrors] = useState<string[]>([]);
+  const queryClient = useQueryClient();
+  const navigate = useNavigate({ from: "/board" });
+
+  const createEdge = useMutation({
+    mutationFn: api.createEdge,
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["edges"] });
+      void navigate({ to: "/edges/$edgeId", params: { edgeId: result.edge_id } });
+    }
+  });
+
+  function handleSubmit() {
+    setErrors([]);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      setErrors(["JSONとして解析できません"]);
+      return;
+    }
+    const result = createEdgeRequestSchema.safeParse(parsed);
+    if (!result.success) {
+      setErrors(result.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`));
+      return;
+    }
+    createEdge.mutate(result.data);
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700"
+      >
+        ＋ AIから貼り戻して新規Edge作成
+      </button>
+    );
+  }
+
+  return (
+    <div className="space-y-2 rounded border border-slate-800 bg-slate-900 p-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs font-medium text-slate-400">AIからの貼り戻し (literature_import)</h2>
+        <button onClick={() => setOpen(false)} className="text-xs text-slate-500 hover:text-slate-300">
+          閉じる
+        </button>
+      </div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder='{"title": "...", "category": "...", "hypothesis": "...", "rationale": "...", "origin": "..."}'
+        rows={6}
+        className="w-full rounded border border-slate-700 bg-slate-950 p-2 font-mono text-xs text-slate-300"
+      />
+      {errors.length > 0 && (
+        <ul className="space-y-0.5 text-xs text-reject">
+          {errors.map((e) => (
+            <li key={e}>{e}</li>
+          ))}
+        </ul>
+      )}
+      {createEdge.isError && (
+        <p className="text-xs text-reject">
+          {createEdge.error instanceof Error ? createEdge.error.message : "Edge作成に失敗しました"}
+        </p>
+      )}
+      <button
+        onClick={handleSubmit}
+        disabled={createEdge.isPending || text.trim().length === 0}
+        className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-sm hover:bg-slate-700 disabled:opacity-50"
+      >
+        検証してEdge作成
+      </button>
+    </div>
+  );
+}
 
 function groupByStatus(edges: EdgeSummary[]): Record<string, EdgeSummary[]> {
   const groups: Record<string, EdgeSummary[]> = {};
@@ -175,6 +260,7 @@ export function EdgeBoardScreen() {
           </select>
         </div>
       </div>
+      <LiteratureImportForm />
       {isLoading && <p className="text-slate-400">読み込み中…</p>}
       {error && <p className="text-reject">エッジの読み込みに失敗しました。</p>}
       {data && tab === "lifecycle" && <LifecycleView edges={filteredEdges} />}

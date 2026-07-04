@@ -1,11 +1,11 @@
 """Daily-light job (docs/01 §3.2 `research-daily`, docs/09 Phase 2).
 
-V1/Phase 2 scope: recompute today's rule-based regime label (docs/04 §6)
-and submit it. The remaining daily-light responsibilities from docs/09
-(§4 CUSUM decay checks against ACTIVE/PAPER Edges, Research Pack
-generation) depend on paper_signals volume and the AI-handoff Pack
-templates (docs/07) respectively, and are intentionally left as follow-up
-work rather than stubbed out here with fabricated behavior.
+V1/Phase 2 scope: recompute today's rule-based regime label (docs/04 §6),
+submit it, and generate the daily_briefing Research Pack (docs/07 §2-4,
+docs/15 SONNET-2). The remaining daily-light responsibility from docs/09
+§4 (CUSUM decay checks against ACTIVE/PAPER Edges) depends on
+paper_signals volume, which is still unimplemented (docs/14 §6) — left as
+follow-up work rather than stubbed out here with fabricated behavior.
 """
 
 from __future__ import annotations
@@ -18,7 +18,8 @@ import sys
 import pandas as pd
 
 from cryptoedge_research.io.internal_client import InternalApiClient, RegimeUpdateInput
-from cryptoedge_research.io.lake import read_candles
+from cryptoedge_research.io.lake import read_candles, write_bytes
+from cryptoedge_research.packs.daily_briefing import PACK_VERSION, build_daily_briefing
 from cryptoedge_research.regimes.rule_based import classify_regime
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,34 @@ def compute_today_regime(instrument_id: str = "BTCUSDT.BINANCE.PERP") -> RegimeU
     )
 
 
+def generate_daily_briefing(client: InternalApiClient, regime: RegimeUpdateInput | None) -> str:
+    """Builds and registers today's daily_briefing Research Pack (docs/07
+    §2-4, docs/15 SONNET-2). Runs even when `regime` is None (not enough
+    history yet) — the briefing should still surface DQ/verdict/readiness
+    state on a day the regime classifier can't produce a label, rather than
+    silently skipping the whole Pack."""
+    ref_date = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%d")
+    since = int(datetime.datetime.now(tz=datetime.UTC).timestamp() * 1000) - 24 * 60 * 60 * 1000
+
+    dq_issues = client.get_dq_issues(since)
+    verdicts = client.get_verdicts(since)
+    readiness = client.get_readiness_summary()
+
+    content = build_daily_briefing(ref_date, regime, dq_issues, verdicts, readiness)
+    content_ref = f"packs/briefing/{ref_date}.md"
+    write_bytes(content_ref, content.encode("utf-8"))
+
+    output_id = client.submit_ai_output(
+        kind="briefing",
+        content_ref=content_ref,
+        model="template",
+        prompt_version=PACK_VERSION,
+        ref_date=ref_date,
+    )
+    logger.info("generated daily_briefing pack %s -> %s", output_id, content_ref)
+    return output_id
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO)
     base_url = os.environ["CRYPTOEDGE_API_URL"]
@@ -106,9 +135,11 @@ def main() -> int:
         regime = compute_today_regime()
         if regime is None:
             logger.info("no regime update to submit")
-            return 0
-        written = client.submit_regimes([regime])
-        logger.info("submitted %d regime row(s): %s", written, regime.model_dump())
+        else:
+            written = client.submit_regimes([regime])
+            logger.info("submitted %d regime row(s): %s", written, regime.model_dump())
+
+        generate_daily_briefing(client, regime)
     return 0
 
 

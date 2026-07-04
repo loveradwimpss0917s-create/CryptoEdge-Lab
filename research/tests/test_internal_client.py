@@ -101,3 +101,77 @@ def test_error_response_raises_internal_api_error():
     client = _client_with_handler(handler)
     with pytest.raises(InternalApiError):
         client.claim_jobs()
+
+
+def test_get_dq_issues_parses_rows(monkeypatch: pytest.MonkeyPatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["since"] == "100"
+        return httpx.Response(
+            200,
+            json={
+                "dq_issues": [
+                    {"stream_id": "s1", "rule_id": "DQ-01", "severity": "critical", "detected_at": 100}
+                ]
+            },
+        )
+
+    client = _client_with_handler(handler)
+    issues = client.get_dq_issues(100)
+    assert len(issues) == 1
+    assert issues[0].rule_id == "DQ-01"
+
+
+def test_get_verdicts_parses_rows():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "verdicts": [
+                    {"verdict": "ADOPT", "run_kind": "full", "edge_title": "cme-gap-fill", "decided_at": 500}
+                ]
+            },
+        )
+
+    client = _client_with_handler(handler)
+    verdicts = client.get_verdicts(0)
+    assert verdicts[0].verdict == "ADOPT"
+    assert verdicts[0].edge_title == "cme-gap-fill"
+
+
+def test_get_readiness_summary_parses_rollup():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "ready_count": 3,
+                "review_pending": {"screen": 1, "full": 0},
+                "blocked_breakdown": {
+                    "build_pending": 5, "signal_spec_pending": 7, "feature_pending": 2, "data_pending": 4
+                },
+            },
+        )
+
+    client = _client_with_handler(handler)
+    readiness = client.get_readiness_summary()
+    assert readiness.ready_count == 3
+    assert readiness.blocked_breakdown["build_pending"] == 5
+
+
+def test_submit_ai_output_sends_pack_pointer():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"output_id": "o1"})
+
+    client = _client_with_handler(handler)
+    output_id = client.submit_ai_output(
+        kind="briefing",
+        content_ref="packs/briefing/2026-07-04.md",
+        model="template",
+        prompt_version="daily_briefing-1.0",
+        ref_date="2026-07-04"
+    )
+    assert output_id == "o1"
+    assert captured["body"]["kind"] == "briefing"
+    assert captured["body"]["content_ref"] == "packs/briefing/2026-07-04.md"

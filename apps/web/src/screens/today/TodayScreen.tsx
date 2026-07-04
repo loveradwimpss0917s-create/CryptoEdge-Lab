@@ -1,13 +1,53 @@
 // SCR-01 Today (docs/06 §3). Minimal V1 slice: the market snapshot strip +
-// Research Readiness summary (docs/06 §7.6, 2026-07 design). The Action
-// Queue / AI briefing panels are still follow-up work (docs/09 P1) — they
-// depend on ai_outputs and jobs data this pass doesn't yet surface.
+// Research Readiness summary (docs/06 §7.6, 2026-07 design) + [Copy for AI]
+// for the daily_briefing Research Pack (docs/07 §2-4, docs/15 SONNET-2). The
+// Action Queue panel is still follow-up work (docs/09 P1) — it depends on
+// jobs data this pass doesn't yet surface.
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { api, type QuotaRow, type ReadinessState } from "../../api/client";
+import { ApiError, api, type QuotaRow, type ReadinessState } from "../../api/client";
 import { formatSnapshotValue, formatUtcTimestamp } from "../../lib/format";
 import { QUOTA_RESOURCE_LABEL } from "../../lib/labels";
+
+type CopyState = "idle" | "copying" | "copied" | "not_found" | "error";
+
+// docs/07 §4 [Copy for AI]: fetches the latest daily_briefing Pack and
+// copies its markdown to the clipboard so the researcher can paste it
+// straight into Claude/ChatGPT/Gemini — no server-side AI call involved.
+function CopyForAiButton() {
+  const [state, setState] = useState<CopyState>("idle");
+
+  async function handleClick() {
+    setState("copying");
+    try {
+      const pack = await api.getLatestPack("briefing");
+      await navigator.clipboard.writeText(pack.content);
+      setState("copied");
+    } catch (err) {
+      setState(err instanceof ApiError && err.problem.status === 404 ? "not_found" : "error");
+    }
+  }
+
+  const label: Record<CopyState, string> = {
+    idle: "📋 Copy for AI (daily briefing)",
+    copying: "取得中…",
+    copied: "✓ コピーしました",
+    not_found: "まだ生成されていません",
+    error: "取得に失敗しました"
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={state === "copying"}
+      className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700 disabled:opacity-50"
+    >
+      {label[state]}
+    </button>
+  );
+}
 
 const BLOCKED_ROW_LABEL: Record<"build_pending" | "signal_spec_pending" | "feature_pending" | "data_pending", string> =
   {
@@ -76,13 +116,16 @@ export function TodayScreen() {
         <div className="space-y-3 rounded border border-slate-800 bg-slate-900 p-3">
           <div className="flex items-center justify-between">
             <h2 className="text-xs font-medium text-slate-400">🧭 RESEARCH READINESS</h2>
-            <Link
-              to="/board"
-              search={{ readiness: "READY" }}
-              className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-slate-950 hover:bg-emerald-500"
-            >
-              今すぐ評価可能: {readinessSummary.ready_count}件 →
-            </Link>
+            <div className="flex items-center gap-2">
+              <CopyForAiButton />
+              <Link
+                to="/board"
+                search={{ readiness: "READY" }}
+                className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-slate-950 hover:bg-emerald-500"
+              >
+                今すぐ評価可能: {readinessSummary.ready_count}件 →
+              </Link>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
             {(Object.keys(BLOCKED_ROW_LABEL) as (keyof typeof BLOCKED_ROW_LABEL)[]).map((key) => (

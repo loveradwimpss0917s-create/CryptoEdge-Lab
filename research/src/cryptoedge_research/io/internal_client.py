@@ -127,6 +127,27 @@ class CorrelationUpdateInput(BaseModel):
     run_batch: str | None = None
 
 
+class DqIssueOutput(BaseModel):
+    stream_id: str
+    rule_id: str
+    severity: str
+    detected_at: int
+    detail: str | None = None
+
+
+class VerdictSummaryOutput(BaseModel):
+    verdict: Verdict
+    run_kind: str
+    edge_title: str
+    decided_at: int
+
+
+class ReadinessSummaryOutput(BaseModel):
+    ready_count: int
+    review_pending: dict[str, int]
+    blocked_breakdown: dict[str, int]
+
+
 class InternalApiError(Exception):
     def __init__(self, status_code: int, body: str):
         super().__init__(f"internal API returned HTTP {status_code}: {body[:500]}")
@@ -188,6 +209,49 @@ class InternalApiClient:
         `regime` node (docs/05 §9) evaluates against — previously
         on_demand.py never fetched these at all (2026-07 review, TASK-1)."""
         return self._get("/internal/regimes", params={"from": from_dt, "to": to_dt})["regimes"]
+
+    def get_dq_issues(self, since_ts: int) -> list[DqIssueOutput]:
+        """Open DQ issues detected at/after `since_ts` (docs/07 §2 DATA
+        section, docs/15 SONNET-2 daily_briefing pack)."""
+        rows = self._get("/internal/dq-issues", params={"since": since_ts})["dq_issues"]
+        return [DqIssueOutput.model_validate(r) for r in rows]
+
+    def get_verdicts(self, since_ts: int) -> list[VerdictSummaryOutput]:
+        """Verdicts decided at/after `since_ts`, joined to the edge title
+        (docs/15 SONNET-2 daily_briefing pack)."""
+        rows = self._get("/internal/verdicts", params={"since": since_ts})["verdicts"]
+        return [VerdictSummaryOutput.model_validate(r) for r in rows]
+
+    def get_readiness_summary(self) -> ReadinessSummaryOutput:
+        """Same rollup as GET /api/v1/edges/readiness-summary (docs/06 §7.6),
+        mirrored under Bearer auth so research-worker doesn't need Cloudflare
+        Access credentials (docs/15 SONNET-2)."""
+        return ReadinessSummaryOutput.model_validate(self._get("/internal/readiness-summary"))
+
+    def submit_ai_output(
+        self,
+        kind: str,
+        content_ref: str,
+        model: str,
+        prompt_version: str,
+        ref_date: str | None = None,
+        entity: str | None = None,
+    ) -> str:
+        """Registers a Research Pack already written to R2 at `content_ref`
+        (docs/07 §2, docs/15 SONNET-2) so GET /api/v1/packs/:kind/latest can
+        find and serve it."""
+        result = self._post(
+            "/internal/ai-outputs",
+            {
+                "kind": kind,
+                "ref_date": ref_date,
+                "entity": entity,
+                "model": model,
+                "prompt_version": prompt_version,
+                "content_ref": content_ref,
+            },
+        )
+        return result["output_id"]
 
     def get_backup_tables(self) -> list[str]:
         """The whitelisted table names the weekly backup job dumps (docs/12 §3)."""

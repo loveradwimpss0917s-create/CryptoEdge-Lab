@@ -3,6 +3,14 @@
 > 方針転換 (v2): AI API を常時組み込まない。**プラットフォームの仕事は「AI に渡しやすい研究データ (Research Pack) を自動生成すること」**であり、解析は研究者が必要時に Claude / ChatGPT / Gemini へ持ち込む。運用コスト ¥0。
 > 原則は不変: AI は仮説生成と要約のため。Verdict 判定・数値計算には決して使わない。
 
+> **実装状況 (docs/15 SONNET-2, 2026-07)**: V1 DoD #4 (docs/09 §2) を満たす最小スライスとして
+> `daily_briefing` pack_kind のみ実装済み — research-daily ジョブが§3のテンプレートで生成 → R2 へ
+> 書き込み → `ai_outputs` へ登録 → `GET /api/v1/packs/briefing/latest` → Today画面の [Copy for AI]。
+> 貼り戻しは §2「双方向スキーマ」の literature_import 用 JSON が既存 `createEdgeRequestSchema` と
+> 同一である点を利用し、Edge Board の貼り付けフォームから既存 `POST /edges` へ直接渡す形で実現した
+> (新規エンドポイント無し)。他の6 pack_kind・S/M/Lサイズ設定・汎用貼り戻しエンドポイントは未実装
+> のまま (docs/15 §4 SONNET-7以降で必要性を再評価)。
+
 ## 1. なぜハンドオフ方式か
 
 1. **コスト**: 日次ブリーフィングを LLM API で生成すると月 $5–15。年単位では無視できない。テンプレート生成 + 必要時ハンドオフなら ¥0

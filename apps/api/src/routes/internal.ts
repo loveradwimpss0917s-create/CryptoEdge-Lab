@@ -6,7 +6,9 @@ import { Hono } from "hono";
 import { newId } from "@cryptoedge/shared";
 import {
   jobStatusUpdateSchema,
+  READINESS_STATES,
   startRunRequestSchema,
+  submitAiOutputRequestSchema,
   submitCorrelationsRequestSchema,
   submitDerivMetricsRequestSchema,
   submitFeatureDefsRequestSchema,
@@ -19,6 +21,7 @@ import {
 } from "@cryptoedge/schema";
 import type { Env } from "../env.js";
 import { audit } from "../services/audit.js";
+import { computeReadinessForEdges, type EdgeReadinessInputRow } from "../services/readiness.js";
 
 export const internalRoute = new Hono<{ Bindings: Env }>();
 
@@ -134,6 +137,59 @@ internalRoute.get("/regimes", async (c) => {
     .bind(from, to)
     .all();
   return c.json({ regimes: results ?? [] });
+});
+
+// Research Pack data sources (docs/07 §2 DATA section, docs/15 SONNET-2):
+// research-worker's daily_briefing generator reads these three so the pack
+// reflects real state rather than fabricated placeholders. Kept as plain
+// reads (no pagination) since they're bounded by "since yesterday" / "all
+// edges", both small in V1.
+internalRoute.get("/dq-issues", async (c) => {
+  const since = Number(c.req.query("since") ?? "0");
+  const { results } = await c.env.DB.prepare(
+    `SELECT stream_id, rule_id, severity, detected_at, detail FROM dq_issues
+     WHERE status = 'open' AND detected_at >= ?1 ORDER BY detected_at DESC LIMIT 50`
+  )
+    .bind(since)
+    .all();
+  return c.json({ dq_issues: results ?? [] });
+});
+
+internalRoute.get("/verdicts", async (c) => {
+  const since = Number(c.req.query("since") ?? "0");
+  const { results } = await c.env.DB.prepare(
+    `SELECT v.verdict, v.decided_at, r.run_kind, e.title AS edge_title
+     FROM verdicts v
+     JOIN eval_runs r ON r.run_id = v.run_id
+     JOIN edge_versions ev ON ev.version_id = r.edge_version_id
+     JOIN edges e ON e.edge_id = ev.edge_id
+     WHERE v.decided_at >= ?1 ORDER BY v.decided_at DESC LIMIT 50`
+  )
+    .bind(since)
+    .all();
+  return c.json({ verdicts: results ?? [] });
+});
+
+// Mirrors edges.ts's GET /readiness-summary (docs/06 §7.6) under Bearer
+// auth so research-worker can embed "今すぐ評価可能: N件" in the daily
+// briefing without needing Cloudflare Access credentials.
+internalRoute.get("/readiness-summary", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT edge_id, status, readiness_class, readiness_blockers FROM edges`
+  ).all<EdgeReadinessInputRow>();
+  const readinessByEdge = await computeReadinessForEdges(c.env, results ?? []);
+  const counts = Object.fromEntries(READINESS_STATES.map((s) => [s, 0])) as Record<string, number>;
+  for (const result of readinessByEdge.values()) counts[result.state] = (counts[result.state] ?? 0) + 1;
+  return c.json({
+    ready_count: counts.READY,
+    review_pending: { screen: counts.SCREEN_DONE, full: counts.FULL_DONE },
+    blocked_breakdown: {
+      build_pending: counts.BUILD_PENDING,
+      signal_spec_pending: counts.SIGNAL_SPEC_PENDING,
+      feature_pending: counts.FEATURE_PENDING,
+      data_pending: counts.DATA_PENDING
+    }
+  });
 });
 
 // docs/05 §3.7 DSR needs "cumulative screen+full run count against the
@@ -405,6 +461,33 @@ internalRoute.post("/liquidations", async (c) => {
     )
   );
   return c.json({ written: body.liquidations.length }, 201);
+});
+
+// Research Pack registration (docs/07 §2, docs/15 SONNET-2): research-worker
+// has already generated the pack content (deterministic template) and
+// written it to R2 at `content_ref`; this just records it in `ai_outputs` so
+// GET /api/v1/packs/:kind/latest can find and serve it.
+internalRoute.post("/ai-outputs", async (c) => {
+  const body = submitAiOutputRequestSchema.parse(await c.req.json());
+  const outputId = newId();
+  await c.env.DB.prepare(
+    `INSERT INTO ai_outputs (output_id, kind, ref_date, entity, model, prompt_version, content_ref, tokens_in, tokens_out, status, created_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'draft', ?10)`
+  )
+    .bind(
+      outputId,
+      body.kind,
+      body.ref_date ?? null,
+      body.entity ?? null,
+      body.model,
+      body.prompt_version,
+      body.content_ref,
+      body.tokens_in ?? null,
+      body.tokens_out ?? null,
+      Date.now()
+    )
+    .run();
+  return c.json({ output_id: outputId }, 201);
 });
 
 internalRoute.post("/correlations", async (c) => {

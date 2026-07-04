@@ -5,6 +5,7 @@
 // pydantic models validated against the same golden fixtures (docs/11 §4).
 
 import { z } from "zod";
+import { AI_OUTPUT_KINDS } from "../db/enums.js";
 
 export const runMetricInputSchema = z.object({
   segment: z.string().min(1),
@@ -210,8 +211,21 @@ export const submitLiquidationsRequestSchema = z.object({
 });
 export type SubmitLiquidationsRequest = z.infer<typeof submitLiquidationsRequestSchema>;
 
-export const briefingReadyRequestSchema = z.object({
-  ref_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  summary: z.record(z.string(), z.unknown())
+// Research Pack (docs/07 §2, docs/15 SONNET-2): research-worker generates
+// the pack content itself (deterministic template, no AI call — docs/07 §3
+// "AI なしで成立させる") and writes it to R2; this just registers the
+// resulting ai_outputs row so the api Worker can serve it back via
+// GET /api/v1/packs/:kind/latest. Replaces an earlier
+// `briefing-ready`/`summary` stub that assumed a two-step
+// notify-then-generate flow docs/07's actual design never called for.
+export const submitAiOutputRequestSchema = z.object({
+  kind: z.enum(AI_OUTPUT_KINDS),
+  ref_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  entity: z.string().nullable().optional(),
+  model: z.string().min(1),
+  prompt_version: z.string().min(1),
+  content_ref: z.string().min(1),
+  tokens_in: z.number().int().nullable().optional(),
+  tokens_out: z.number().int().nullable().optional()
 });
-export type BriefingReadyRequest = z.infer<typeof briefingReadyRequestSchema>;
+export type SubmitAiOutputRequest = z.infer<typeof submitAiOutputRequestSchema>;

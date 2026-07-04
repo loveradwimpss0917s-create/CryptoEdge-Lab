@@ -13,6 +13,7 @@ import { problemDetailsErrorHandler } from "./middleware/error.js";
 import { edgesRoute } from "./routes/edges.js";
 import { marketRoute } from "./routes/market.js";
 import { opsRoute } from "./routes/ops.js";
+import { packsRoute } from "./routes/packs.js";
 import { internalRoute } from "./routes/internal.js";
 
 const app = new Hono<{ Bindings: Env; Variables: AccessVariables }>();
@@ -25,6 +26,7 @@ app.use("/api/v1/*", requireAccess);
 app.route("/api/v1/edges", edgesRoute);
 app.route("/api/v1/market", marketRoute);
 app.route("/api/v1/ops", opsRoute);
+app.route("/api/v1/packs", packsRoute);
 
 app.use("/internal/*", requireInternalToken);
 app.route("/internal", internalRoute);

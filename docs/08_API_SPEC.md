@@ -54,14 +54,25 @@
 
 ### Reports / Research Pack (AI ハンドオフ) / Jobs / Settings
 
+**実装状況 (docs/15 SONNET-2, 2026-07)**: `GET /packs/:kind/latest` のみ実装済み — `daily_briefing`
+(DB上のkindは`briefing`) 1種類の読み出し専用 V1 スライス。生成は research-worker の
+research-daily ジョブが行い (決定論テンプレート、AI 不使用、docs/07 §3)、`POST /internal/ai-outputs`
+で登録する。貼り戻しは専用エンドポイントを設けず、literature_import 相当の
+JSON (`createEdgeRequestSchema` と同一) を既存の `POST /edges` へ直接渡す設計とした —
+新規テーブル・新規スキーマを増やさず既存の Edge 作成経路をそのまま再利用できるため。
+下表の `/briefings`・`/packs?kind=&entity=`・`/packs/generate`・`/packs/{id}/response`・`/reports`・
+`/actions` は docs/07 のフルスコープ (全 pack_kind、S/M/L サイズ、汎用貼り戻し) 用に設計時点で
+定義したままの未実装項目 — 需要が生まれた時点で追加する。
+
 | Method Path | 説明 |
 |---|---|
-| GET `/briefings?date=` / GET `/briefings/latest` | ブリーフィング (テンプレ生成, 本文は R2) |
-| GET `/reports?kind=` | 週次等アーカイブ |
-| GET `/packs?kind=&entity=` | 生成済み Research Pack 一覧 (docs/07 §2) |
-| POST `/packs/generate` | body: pack_kind, entity, size(S/M/L) → Pack を同期生成 (テンプレのみ・AI 不使用) して R2 パス返却 |
-| POST `/packs/{id}/response` | AI 回答の貼り戻し。zod 検証 → ai_outputs (source='handoff') に記録 |
-| GET `/actions` | Action Queue (承認待ち遷移 + findings new + DQ open の合成) |
+| GET `/packs/:kind/latest` | **実装済み**: 指定kind (`briefing`など) の最新 Research Pack を R2 から読み出して返す (docs/15 SONNET-2) |
+| GET `/briefings?date=` / GET `/briefings/latest` | (未実装) ブリーフィング (テンプレ生成, 本文は R2) |
+| GET `/reports?kind=` | (未実装) 週次等アーカイブ |
+| GET `/packs?kind=&entity=` | (未実装) 生成済み Research Pack 一覧 (docs/07 §2) |
+| POST `/packs/generate` | (未実装) body: pack_kind, entity, size(S/M/L) → Pack を同期生成 (テンプレのみ・AI 不使用) して R2 パス返却 |
+| POST `/packs/{id}/response` | (未実装) AI 回答の貼り戻し。V1では代わりに既存 `POST /edges` を literature_import 相当の貼り戻し先として使う (docs/15 SONNET-2) |
+| GET `/actions` | (未実装) Action Queue (承認待ち遷移 + findings new + DQ open の合成) |
 | GET `/jobs?status=` / GET `/jobs/{id}` / POST `/jobs/{id}/cancel` | ジョブ管理 |
 | GET `/settings` / PUT `/settings/{key}` | 閾値セット等 (PUT は version インクリメント) |
 | GET `/audit?entity=` | 監査ログ |
@@ -88,7 +99,10 @@
 | POST `/internal/deriv-metrics` | open_interest + long_short_ratios バルク upsert (data.binance.vision 日次 `metrics` アーカイブ由来、同一ファイルから両テーブルへ、2026-07 レビュー TASK-3) |
 | POST `/internal/liquidations` | liquidations_5m バルク upsert (data.binance.vision 日次 `liquidationSnapshot` アーカイブを 5m バケット集計、2026-07 レビュー TASK-3) |
 | POST `/internal/correlations` | edge_correlations 更新 |
-| POST `/internal/briefing-ready` | nightly 完了通知 → AI ブリーフィング生成をトリガ |
+| GET `/internal/dq-issues?since=` | オープン中のDQ issueを`since`(unix ms)以降で返却 (daily_briefing Pack のDATA節、docs/15 SONNET-2) |
+| GET `/internal/verdicts?since=` | `since`以降に確定したverdictをedge titleと結合して返却 (daily_briefing Pack、docs/15 SONNET-2) |
+| GET `/internal/readiness-summary` | `GET /api/v1/edges/readiness-summary`と同じロールアップをBearer認証下で提供 (docs/06 §7.6、docs/15 SONNET-2) |
+| POST `/internal/ai-outputs` | 生成済みPack (R2へ書き込み済み) を`ai_outputs`へ登録。旧`briefing-ready`案 (通知→生成の2段階) を置き換え — 生成自体はresearch-worker内で完結する決定論テンプレートのため (docs/07 §3, docs/15 SONNET-2) |
 
 ### Lake パススルー (ブラウザ内 DuckDB 用)
 

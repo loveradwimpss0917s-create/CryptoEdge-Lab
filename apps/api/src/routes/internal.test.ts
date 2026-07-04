@@ -487,3 +487,82 @@ describe("GET /internal/backup/dump (2026-07 review Task 7)", () => {
     expect(body2.rows[0]!.instrument_id).toBe("i2");
   });
 });
+
+describe("Research Pack data sources (docs/15 SONNET-2)", () => {
+  it("GET /internal/dq-issues returns only open issues at/after `since`", async () => {
+    await env.DB.prepare(
+      `INSERT INTO dq_issues (detected_at, stream_id, rule_id, severity, status) VALUES (100, 's1', 'DQ-01', 'critical', 'open')`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO dq_issues (detected_at, stream_id, rule_id, severity, status) VALUES (50, 's1', 'DQ-01', 'warn', 'open')`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO dq_issues (detected_at, stream_id, rule_id, severity, status) VALUES (200, 's1', 'DQ-01', 'critical', 'resolved')`
+    ).run();
+
+    const res = await internalRoute.request("/dq-issues?since=100", {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { dq_issues: { detected_at: number; severity: string }[] };
+    expect(body.dq_issues).toHaveLength(1);
+    expect(body.dq_issues[0]?.detected_at).toBe(100);
+  });
+
+  it("GET /internal/verdicts joins through eval_runs/edge_versions to the edge title", async () => {
+    await env.DB.prepare(
+      `INSERT INTO edges (edge_id, slug, title, category, status, hypothesis, rationale, origin, created_at, updated_at)
+       VALUES ('e1', 'slug', 'My Edge', 'microstructure', 'TESTING', 'h', 'r', 'manual', 1, 1)`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO edge_versions (version_id, edge_id, semver, signal_spec, params, instrument_id, direction, horizon, cost_model, created_at, is_current)
+       VALUES ('v1', 'e1', '1.0.0', '{"when":{}}', '{}', 'BTCUSDT.BINANCE.PERP', 'long', '24h', '{"taker_bps":4,"slippage_bps":2,"funding_included":false}', 1, 1)`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO eval_runs (run_id, edge_version_id, protocol_version, run_kind, dataset_hash, snapshot_id, seed, config, status, requested_by, git_sha)
+       VALUES ('r1', 'v1', 'p1', 'screen', 'h', 's', 1, '{}', 'done', 'system', 'sha')`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO verdicts (run_id, verdict, reasons, thresholds_version, decided_at) VALUES ('r1', 'REJECT', '[]', 'v1', 500)`
+    ).run();
+
+    const res = await internalRoute.request("/verdicts?since=100", {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { verdicts: { verdict: string; run_kind: string; edge_title: string }[] };
+    expect(body.verdicts).toEqual([{ verdict: "REJECT", run_kind: "screen", edge_title: "My Edge", decided_at: 500 }]);
+  });
+
+  it("GET /internal/readiness-summary tallies readiness across all edges", async () => {
+    await env.DB.prepare(
+      `INSERT INTO edges (edge_id, slug, title, category, status, hypothesis, rationale, origin, created_at, updated_at)
+       VALUES ('e1', 'slug', 'T', 'microstructure', 'IDEA', 'h', 'r', 'manual', 1, 1)`
+    ).run();
+    const res = await internalRoute.request("/readiness-summary", {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ready_count: number; blocked_breakdown: { signal_spec_pending: number } };
+    expect(body.blocked_breakdown.signal_spec_pending).toBe(1);
+    expect(body.ready_count).toBe(0);
+  });
+
+  it("POST /internal/ai-outputs records a pack pointer", async () => {
+    const res = await internalRoute.request(
+      "/ai-outputs",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          kind: "briefing",
+          ref_date: "2026-07-04",
+          model: "template",
+          prompt_version: "daily_briefing-1.0",
+          content_ref: "packs/briefing/2026-07-04.md"
+        })
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+    const row = await env.DB.prepare(`SELECT kind, content_ref, status FROM ai_outputs`).first<{
+      kind: string;
+      content_ref: string;
+      status: string;
+    }>();
+    expect(row).toEqual({ kind: "briefing", content_ref: "packs/briefing/2026-07-04.md", status: "draft" });
+  });
+});

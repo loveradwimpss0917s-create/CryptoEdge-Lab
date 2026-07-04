@@ -4,6 +4,8 @@
 // client doesn't need to know about that, only `credentials: "include"`
 // so the browser sends whatever Access has set.
 
+import type { CreateEdgeRequest } from "@cryptoedge/schema";
+
 const BASE = "/api/v1";
 
 export interface ProblemDetails {
@@ -134,6 +136,21 @@ export interface QuotaOverview {
   quota: QuotaRow[];
 }
 
+// Research Pack (docs/07 §2-4, docs/15 SONNET-2 V1 slice): daily_briefing
+// only for now. `kind` matches the ai_outputs.kind enum ("briefing", not
+// docs/07's `pack_kind` name "daily_briefing" -- the DB enum predates and
+// doesn't fully mirror the docs vocabulary).
+export interface PackContent {
+  output_id: string;
+  kind: string;
+  ref_date: string | null;
+  model: string;
+  prompt_version: string;
+  created_at: number;
+  content: string;
+}
+
+
 export const api = {
   listEdges: (params?: { status?: string; category?: string; q?: string }) => {
     const qs = new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v) as string[][]);
@@ -153,5 +170,11 @@ export const api = {
     }),
   marketOverview: () => request<MarketSnapshot>("/market/overview"),
   quotaOverview: () => request<QuotaOverview>("/ops/quota"),
-  readinessSummary: () => request<ReadinessSummary>("/edges/readiness-summary")
+  readinessSummary: () => request<ReadinessSummary>("/edges/readiness-summary"),
+  getLatestPack: (kind: string) => request<PackContent>(`/packs/${kind}/latest`),
+  createEdge: (body: CreateEdgeRequest) =>
+    request<{ edge_id: string; slug: string; status: string }>("/edges", {
+      method: "POST",
+      body: JSON.stringify(body)
+    })
 };
