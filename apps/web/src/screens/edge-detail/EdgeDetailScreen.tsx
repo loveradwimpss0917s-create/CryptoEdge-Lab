@@ -8,9 +8,42 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { EDGE_TRANSITION_GRAPH, type EdgeStatus } from "@cryptoedge/schema";
-import { api, type RunSummary } from "../../api/client";
+import { api, type RunSummary, type Readiness } from "../../api/client";
 import { formatUtcTimestamp } from "../../lib/format";
-import { STATUS_LABEL, VERDICT_CHECK_LABEL, VERDICT_LABEL } from "../../lib/labels";
+import {
+  missingElementsSummary,
+  nextActionLabel,
+  READINESS_STATE_BADGE_CLASS,
+  READINESS_STATE_LABEL,
+  STATUS_LABEL,
+  VERDICT_CHECK_LABEL,
+  VERDICT_LABEL
+} from "../../lib/labels";
+
+// docs/06 §7: readiness の状態・不足要素・次アクションを1つだけ表示する。
+function ReadinessPanel({ readiness }: { readiness: Readiness }) {
+  const chips = missingElementsSummary(readiness.missing);
+  return (
+    <section className="space-y-2 rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="flex items-center gap-2">
+        <h2 className="text-sm font-medium text-slate-400">Research Readiness</h2>
+        <span className={`rounded px-2 py-0.5 text-xs font-medium ${READINESS_STATE_BADGE_CLASS[readiness.state]}`}>
+          {READINESS_STATE_LABEL[readiness.state]}
+        </span>
+      </div>
+      {chips.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {chips.map((chip) => (
+            <span key={chip} className="rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-300">
+              {chip}
+            </span>
+          ))}
+        </div>
+      )}
+      <p className="text-sm text-slate-300">次のアクション: {nextActionLabel(readiness)}</p>
+    </section>
+  );
+}
 
 const VERDICT_BADGE_CLASS: Record<"ADOPT" | "WATCH" | "REJECT", string> = {
   ADOPT: "bg-adopt text-slate-950",
@@ -118,6 +151,8 @@ export function EdgeDetailScreen() {
         {edge.pdf_ref && <span className="rounded bg-slate-800 px-2 py-0.5 text-xs">{edge.pdf_ref}</span>}
       </div>
       <p className="text-sm text-slate-500">{edge.category}</p>
+
+      {edge.readiness && <ReadinessPanel readiness={edge.readiness} />}
 
       <section className="space-y-2 rounded border border-slate-800 bg-slate-900 p-4">
         <div>

@@ -36,6 +36,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Research Readiness (docs/06 §7, 2026-07 design): an axis orthogonal to
+// lifecycle status. Computed server-side (apps/api/src/services/
+// readiness.ts) from the current edge_version + eval_runs + feature_defs +
+// base-data presence, never stored, so it's always live.
+export type ReadinessState =
+  | "VALIDATED_PLUS"
+  | "FULL_DONE"
+  | "SCREEN_DONE"
+  | "READY"
+  | "DATA_PENDING"
+  | "FEATURE_PENDING"
+  | "SIGNAL_SPEC_PENDING"
+  | "BUILD_PENDING";
+
+export interface MissingElements {
+  signalSpec?: boolean;
+  feature?: string[];
+  data?: string[];
+  event?: string[];
+  build?: string[];
+}
+
+export interface Readiness {
+  state: ReadinessState;
+  missing: MissingElements;
+}
+
 export interface EdgeSummary {
   edge_id: string;
   slug: string;
@@ -46,6 +73,20 @@ export interface EdgeSummary {
   pdf_ref: string | null;
   created_at: number;
   updated_at: number;
+  readiness_class: "A" | "B" | "C" | "D" | null;
+  readiness_blockers: string | null;
+  readiness: Readiness | null;
+}
+
+export interface ReadinessSummary {
+  ready_count: number;
+  review_pending: { screen: number; full: number };
+  blocked_breakdown: {
+    build_pending: number;
+    signal_spec_pending: number;
+    feature_pending: number;
+    data_pending: number;
+  };
 }
 
 export interface VerdictReason {
@@ -111,5 +152,6 @@ export const api = {
       body: JSON.stringify({ version_id, kind })
     }),
   marketOverview: () => request<MarketSnapshot>("/market/overview"),
-  quotaOverview: () => request<QuotaOverview>("/ops/quota")
+  quotaOverview: () => request<QuotaOverview>("/ops/quota"),
+  readinessSummary: () => request<ReadinessSummary>("/edges/readiness-summary")
 };

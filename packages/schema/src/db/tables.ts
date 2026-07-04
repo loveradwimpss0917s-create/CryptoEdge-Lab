@@ -9,6 +9,7 @@ import type {
   EdgeCategory,
   EdgeDirection,
   EdgeOrigin,
+  EdgeReadinessClass,
   EdgeStatus,
   FindingKind,
   FindingStatus,
@@ -292,6 +293,11 @@ export interface EdgeRow {
   discovery_finding_id: string | null;
   created_at: EpochMs;
   updated_at: EpochMs;
+  // docs/06 §7.5, docs/14 §2 (Edge Pack v1, 2026-07 Research Readiness):
+  // the one human/AI-curated input the readiness computation can't derive
+  // from signal_spec/feature_defs/data alone.
+  readiness_class: EdgeReadinessClass | null;
+  readiness_blockers: string | null; // JSON string[] of missing implementation items (e.g. "options_surface.rr25 収集")
 }
 
 export interface EdgeVersionRow {

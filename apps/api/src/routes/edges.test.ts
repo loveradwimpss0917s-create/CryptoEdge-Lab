@@ -21,9 +21,13 @@ async function seedEdgeWithVersion(env: Env) {
     `INSERT INTO edges (edge_id, slug, title, category, status, hypothesis, rationale, origin, created_at, updated_at)
      VALUES ('e1', 'slug', 'Title', 'microstructure', 'TESTING', 'h', 'r', 'manual', 1, 1)`
   ).run();
+  // signal_spec must be a fully valid SignalSpec (docs/06 §7.3, 2026-07
+  // Research Readiness computes readiness for every GET /edges/:id call,
+  // which now parses this with the strict zod schema) -- `{"when":{}}`
+  // used to slip by since nothing read `when` structurally before.
   await env.DB.prepare(
     `INSERT INTO edge_versions (version_id, edge_id, semver, signal_spec, params, instrument_id, direction, horizon, cost_model, created_at, is_current)
-     VALUES ('v1', 'e1', '1.0.0', '{"when":{}}', '{}', 'BTCUSDT.BINANCE.PERP', 'long', '24h', '{"taker_bps":4,"slippage_bps":2,"funding_included":false}', 1, 1)`
+     VALUES ('v1', 'e1', '1.0.0', '{"when":{"cmp":[{"feature":"ret_24h"},">",0]},"entry":{"delay_bars":1,"price":"open"},"exit":{"horizon":"24h"},"direction":"long"}', '{}', 'BTCUSDT.BINANCE.PERP', 'long', '24h', '{"taker_bps":4,"slippage_bps":2,"funding_included":false}', 1, 1)`
   ).run();
 }
 

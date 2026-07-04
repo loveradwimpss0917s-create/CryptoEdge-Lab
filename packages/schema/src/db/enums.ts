@@ -33,6 +33,16 @@ export type EdgeCategory = (typeof EDGE_CATEGORIES)[number];
 export const EDGE_ORIGINS = ["pdf_seed", "discovery", "ai_hypothesis", "manual"] as const;
 export type EdgeOrigin = (typeof EDGE_ORIGINS)[number];
 
+// docs/06 §7.5, docs/14 §2 (Edge Pack v1): the one non-automatic input to
+// Research Readiness. "A/B" = a signal_spec can be written with what's
+// currently implemented ("SignalSpec待ち" once no version exists yet); "C/D"
+// = a new data source, DSL node, or Discovery Engine methodology is needed
+// first ("実装待ち"). NULL means unclassified -- readiness defaults that
+// to SIGNAL_SPEC_PENDING (optimistic: assume writable until flagged
+// otherwise) rather than blocking silently.
+export const EDGE_READINESS_CLASSES = ["A", "B", "C", "D"] as const;
+export type EdgeReadinessClass = (typeof EDGE_READINESS_CLASSES)[number];
+
 export const EDGE_DIRECTIONS = ["long", "short", "both", "vol"] as const;
 export type EdgeDirection = (typeof EDGE_DIRECTIONS)[number];
 

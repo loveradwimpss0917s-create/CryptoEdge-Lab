@@ -1,11 +1,28 @@
-// SCR-01 Today (docs/06 §3). Minimal V1 slice: the market snapshot strip.
-// The Action Queue / AI briefing panels are follow-up work (docs/09 P1) —
-// they depend on ai_outputs and jobs data this pass doesn't yet surface.
+// SCR-01 Today (docs/06 §3). Minimal V1 slice: the market snapshot strip +
+// Research Readiness summary (docs/06 §7.6, 2026-07 design). The Action
+// Queue / AI briefing panels are still follow-up work (docs/09 P1) — they
+// depend on ai_outputs and jobs data this pass doesn't yet surface.
 
 import { useQuery } from "@tanstack/react-query";
-import { api, type QuotaRow } from "../../api/client";
+import { Link } from "@tanstack/react-router";
+import { api, type QuotaRow, type ReadinessState } from "../../api/client";
 import { formatSnapshotValue, formatUtcTimestamp } from "../../lib/format";
 import { QUOTA_RESOURCE_LABEL } from "../../lib/labels";
+
+const BLOCKED_ROW_LABEL: Record<"build_pending" | "signal_spec_pending" | "feature_pending" | "data_pending", string> =
+  {
+    build_pending: "実装待ち",
+    signal_spec_pending: "SignalSpec待ち",
+    feature_pending: "FEATURE待ち",
+    data_pending: "DATA待ち"
+  };
+
+const BLOCKED_ROW_STATE: Record<keyof typeof BLOCKED_ROW_LABEL, ReadinessState> = {
+  build_pending: "BUILD_PENDING",
+  signal_spec_pending: "SIGNAL_SPEC_PENDING",
+  feature_pending: "FEATURE_PENDING",
+  data_pending: "DATA_PENDING"
+};
 
 function quotaBarColor(ratio: number): string {
   if (ratio >= 0.8) return "bg-reject";
@@ -46,9 +63,45 @@ export function TodayScreen() {
     retry: false
   });
 
+  const { data: readinessSummary } = useQuery({
+    queryKey: ["readiness-summary"],
+    queryFn: api.readinessSummary,
+    refetchInterval: 60_000
+  });
+
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">今日</h1>
+      {readinessSummary && (
+        <div className="space-y-3 rounded border border-slate-800 bg-slate-900 p-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-medium text-slate-400">🧭 RESEARCH READINESS</h2>
+            <Link
+              to="/board"
+              search={{ readiness: "READY" }}
+              className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-slate-950 hover:bg-emerald-500"
+            >
+              今すぐ評価可能: {readinessSummary.ready_count}件 →
+            </Link>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+            {(Object.keys(BLOCKED_ROW_LABEL) as (keyof typeof BLOCKED_ROW_LABEL)[]).map((key) => (
+              <Link
+                key={key}
+                to="/board"
+                search={{ readiness: BLOCKED_ROW_STATE[key] }}
+                className="rounded border border-slate-800 bg-slate-950 p-2 hover:border-slate-600"
+              >
+                <div className="text-slate-500">{BLOCKED_ROW_LABEL[key]}</div>
+                <div className="font-mono text-lg">{readinessSummary.blocked_breakdown[key]}</div>
+              </Link>
+            ))}
+          </div>
+          <div className="text-xs text-slate-500">
+            レビュー待ち: SCREEN {readinessSummary.review_pending.screen} / FULL {readinessSummary.review_pending.full}
+          </div>
+        </div>
+      )}
       {isLoading && <p className="text-slate-400">市場データを読み込み中…</p>}
       {error && <p className="text-reject">市場データの読み込みに失敗しました。</p>}
       {data && (

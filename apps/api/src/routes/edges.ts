@@ -7,6 +7,7 @@ import {
   createEdgeVersionRequestSchema,
   evalEdgeRequestSchema,
   listEdgesQuerySchema,
+  READINESS_STATES,
   transitionEdgeRequestSchema,
   type EdgeStatus
 } from "@cryptoedge/schema";
@@ -14,6 +15,7 @@ import type { Env } from "../env.js";
 import type { AccessVariables } from "../middleware/require-access.js";
 import { audit } from "../services/audit.js";
 import { attemptTransition } from "../services/edge-lifecycle.js";
+import { computeReadinessForEdges, type EdgeReadinessInputRow } from "../services/readiness.js";
 
 // Matches workers/ingest/src/index.ts's GITHUB_REPO — both Workers dispatch
 // to the same repo, just different event types.
@@ -38,12 +40,45 @@ edgesRoute.get("/", async (c) => {
     params.push(`%${query.q}%`);
   }
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  const sql = `SELECT edge_id, slug, title, category, status, origin, pdf_ref, created_at, updated_at
+  const sql = `SELECT edge_id, slug, title, category, status, origin, pdf_ref, created_at, updated_at, readiness_class, readiness_blockers
                FROM edges ${where} ORDER BY updated_at DESC LIMIT ?${params.length + 1}`;
   const { results } = await c.env.DB.prepare(sql)
     .bind(...params, query.limit)
-    .all();
-  return c.json({ edges: results ?? [] });
+    .all<EdgeReadinessInputRow & Record<string, unknown>>();
+  const rows = results ?? [];
+
+  // Research Readiness (docs/06 §7): computed here, not stored, so it's
+  // always live against the current edge_versions/eval_runs/feature_defs/
+  // data state (2026-07 design).
+  const readinessByEdge = await computeReadinessForEdges(c.env, rows);
+  const edges = rows.map((row) => ({ ...row, readiness: readinessByEdge.get(row.edge_id) ?? null }));
+
+  return c.json({ edges });
+});
+
+// Today's readiness rollup (docs/06 §7.6 SCR-01): "何件が今すぐ評価できるか"
+// + ブロック理由の内訳 + レビュー待ち件数。Board の Readiness ビューと同じ
+// computeReadinessForEdges を使い、集計だけが違う。
+edgesRoute.get("/readiness-summary", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT edge_id, status, readiness_class, readiness_blockers FROM edges`
+  ).all<EdgeReadinessInputRow>();
+  const rows = results ?? [];
+  const readinessByEdge = await computeReadinessForEdges(c.env, rows);
+
+  const counts = Object.fromEntries(READINESS_STATES.map((s) => [s, 0])) as Record<string, number>;
+  for (const result of readinessByEdge.values()) counts[result.state] = (counts[result.state] ?? 0) + 1;
+
+  return c.json({
+    ready_count: counts.READY,
+    review_pending: { screen: counts.SCREEN_DONE, full: counts.FULL_DONE },
+    blocked_breakdown: {
+      build_pending: counts.BUILD_PENDING,
+      signal_spec_pending: counts.SIGNAL_SPEC_PENDING,
+      feature_pending: counts.FEATURE_PENDING,
+      data_pending: counts.DATA_PENDING
+    }
+  });
 });
 
 edgesRoute.post("/", async (c) => {
@@ -84,7 +119,9 @@ edgesRoute.post("/", async (c) => {
 
 edgesRoute.get("/:id", async (c) => {
   const edgeId = c.req.param("id");
-  const edge = await c.env.DB.prepare(`SELECT * FROM edges WHERE edge_id = ?1`).bind(edgeId).first();
+  const edge = await c.env.DB.prepare(`SELECT * FROM edges WHERE edge_id = ?1`)
+    .bind(edgeId)
+    .first<EdgeReadinessInputRow & Record<string, unknown>>();
   if (!edge) return c.json({ type: "about:blank", title: "edge not found", status: 404 }, 404);
 
   const version = await c.env.DB.prepare(
@@ -103,8 +140,14 @@ edgesRoute.get("/:id", async (c) => {
     : null;
 
   const runs = version ? await fetchRecentRuns(c.env, version["version_id"] as string) : [];
+  const readinessByEdge = await computeReadinessForEdges(c.env, [edge]);
 
-  return c.json({ edge, current_version: version ?? null, latest_verdict: latestVerdict ?? null, runs });
+  return c.json({
+    edge: { ...edge, readiness: readinessByEdge.get(edgeId) ?? null },
+    current_version: version ?? null,
+    latest_verdict: latestVerdict ?? null,
+    runs
+  });
 });
 
 // 評価履歴 (2026-07 レビュー Task 8): Edge Dossier に直近の run/verdict/主要

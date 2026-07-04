@@ -12,9 +12,19 @@ const todayRoute = createRoute({
   component: TodayScreen
 });
 
+// Research Readiness (docs/06 §7, 2026-07 design): Today's summary rows
+// link here with `?readiness=STATE` so the Board opens pre-filtered to
+// the state the user clicked (e.g. "今すぐ評価可能" -> readiness=READY).
+export interface BoardSearch {
+  readiness?: string | undefined;
+}
+
 const boardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/board",
+  validateSearch: (search: Record<string, unknown>): BoardSearch => ({
+    readiness: typeof search.readiness === "string" ? search.readiness : undefined
+  }),
   component: EdgeBoardScreen
 });
 
