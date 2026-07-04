@@ -184,7 +184,10 @@ V1 完了後に、SONNET-1/6 で解除される DATA 待ちの状況と合わせ
 
 - OKX rubik long/short 比率アダプタ、liquidation-orders 清算アダプタを実装・デプロイ (`15ca993`)
 - 本番初回 tick-1h (13:15 UTC) で **long_short_ratios は成功** (2行書き込み)。
-  **liquidations_5m は HTTP 400** — OKX の `liquidation-orders` は `instType=SWAP` に対して `instId` フィルタを受け付けず `instFamily` が必要と判明 (本番実データで発見)。`fe89c05` で修正・デプロイ済み。次回 tick-1h (14:15 UTC以降) で再検証要
+  **liquidations_5m は HTTP 400** — OKX の `liquidation-orders` は `instType=SWAP` に対して `instId` フィルタを受け付けず `instFamily` が必要と判明 (本番実データで発見)。`fe89c05` で修正・デプロイ
+- 2回目の tick-1h (14:15 UTC) で HTTP 400 は解消したが `group.details is not iterable` で新規失敗 —
+  同一 instFamily 内で当該インスツルメントの約定が無いグループは `details` を省略して返すことが判明。
+  `3b258f7` で修正・デプロイ済み。次回 tick-1h (15:15 UTC以降) で再検証要
 
 ### SONNET-2 (完了): Research Pack V1 slice
 
@@ -215,3 +218,10 @@ V1 完了後に、SONNET-1/6 で解除される DATA 待ちの状況と合わせ
 最低数件溜まってから (数日〜) 行うのが妥当。今 job を再投入しても同じ理由で失敗するだけなので
 見送った。utc-2123-drift の REJECT 結果は正式な V1 DoD #3 実績として記録済み (3件中1件完了、
 2件はデータ蓄積待ち)。
+
+### SONNET-4 (完了): Data Health API + SCR-05
+
+- `GET /api/v1/data-health` + Data Health 画面を実装・デプロイ (`abf4053`)。V1 DoD #1 の
+  「品質スコア測定手段が無い」を解消
+- 品質スコアは docs/03 §6 の30日ローリング値の近似 (ingest_state に履歴が無いため、Readiness と
+  同じ「都度計算・保存しない」方式)。typecheck/test/lint 全緑、本番デプロイ成功確認済み
