@@ -64,7 +64,15 @@ export function escapeSqlLiteral(value: string): string {
 export async function queryLakeFile<T = Record<string, unknown>>(key: string, sql: string): Promise<T[]> {
   const db = await getDb();
   if (!registeredKeys.has(key)) {
-    await db.registerFileURL(key, `/api/v1/lake/${key}`, duckdb.DuckDBDataProtocol.HTTP, false);
+    // Safari's URL parser (unlike Chromium's) rejects a root-relative path
+    // like "/api/v1/lake/..." here with "SyntaxError: The string did not
+    // match the expected pattern" -- duckdb-wasm needs a fully qualified
+    // URL, not one resolved implicitly against the page's own location.
+    const encodedPath = key
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/");
+    await db.registerFileURL(key, `${location.origin}/api/v1/lake/${encodedPath}`, duckdb.DuckDBDataProtocol.HTTP, false);
     registeredKeys.add(key);
   }
   const conn = await db.connect();

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseDvol } from "./deribit.js";
+import { parseDvolPoints } from "./deribit.js";
 
-describe("parseDvol", () => {
-  it("floors the timestamp to the enclosing hour and takes the last close", () => {
-    const parsed = parseDvol({
+describe("parseDvolPoints", () => {
+  it("floors every point's timestamp to the enclosing hour", () => {
+    const parsed = parseDvolPoints({
       result: {
         data: [
           [1_700_000_000_000, 50, 52, 49, 51],
@@ -11,11 +11,13 @@ describe("parseDvol", () => {
         ]
       }
     });
-    expect(parsed.close).toBe(52.5);
-    expect(parsed.hourTs % 3_600_000).toBe(0);
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0]?.close).toBe(51);
+    expect(parsed[1]?.close).toBe(52.5);
+    expect(parsed.every((p) => p.hourTs % 3_600_000 === 0)).toBe(true);
   });
 
   it("throws when the API returns no points", () => {
-    expect(() => parseDvol({ result: { data: [] } })).toThrow();
+    expect(() => parseDvolPoints({ result: { data: [] } })).toThrow();
   });
 });

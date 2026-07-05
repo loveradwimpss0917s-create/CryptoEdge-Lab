@@ -12,11 +12,19 @@ export interface VolatilityIndexResponse {
   };
 }
 
-export function parseDvol(data: VolatilityIndexResponse): { hourTs: number; close: number } {
-  const last = data.result.data.at(-1);
-  if (!last) throw new Error("Deribit DVOL returned no data points");
-  const [ts, , , , close] = last;
-  return { hourTs: Math.floor(ts / 3_600_000) * 3_600_000, close };
+// 24h, not just the current hour: Deribit's public API sits behind
+// Cloudflare Workers' shared egress IP pool same as every other adapter
+// here (docs/03 §2.1), and has had sustained multi-hour 429 outages in
+// production. A window this narrow used to silently lose any hour that
+// fell outside it once an outage ran longer than the window -- widening
+// it means the very next successful call backfills the whole gap instead
+// of only ever recovering the most recent point.
+export function parseDvolPoints(data: VolatilityIndexResponse): { hourTs: number; close: number }[] {
+  if (data.result.data.length === 0) throw new Error("Deribit DVOL returned no data points");
+  return data.result.data.map(([ts, , , , close]) => ({
+    hourTs: Math.floor(ts / 3_600_000) * 3_600_000,
+    close
+  }));
 }
 
 export const deribitDvolAdapter: Adapter = {
@@ -25,19 +33,27 @@ export const deribitDvolAdapter: Adapter = {
   requestBudget: 1,
   async run(env): Promise<AdapterRunResult> {
     const now = Date.now();
-    const start = now - 2 * 60 * 60_000;
+    const start = now - 24 * 60 * 60_000;
     const url = `https://www.deribit.com/api/v2/public/get_volatility_index_data?currency=BTC&start_timestamp=${start}&end_timestamp=${now}&resolution=3600`;
-    const { hourTs, close } = parseDvol(await fetchJson<VolatilityIndexResponse>(url));
+    const points = parseDvolPoints(await fetchJson<VolatilityIndexResponse>(url));
 
-    await env.DB.prepare(
-      `INSERT INTO options_surface (underlying, ts, dvol, ingested_at)
-       VALUES ('BTC', ?1, ?2, ?3)
-       ON CONFLICT (underlying, ts) DO UPDATE SET dvol = excluded.dvol, ingested_at = excluded.ingested_at`
-    )
-      .bind(hourTs, close, now)
-      .run();
-    await upsertLatestSnapshot(env, "dvol:BTC", { v: close, ts: hourTs, ingested_at: now });
+    // Sequential by design -- D1 batch() doesn't dedupe ON CONFLICT targets
+    // within a single call, and this is at most 24 rows.
+    /* eslint-disable no-await-in-loop */
+    for (const point of points) {
+      await env.DB.prepare(
+        `INSERT INTO options_surface (underlying, ts, dvol, ingested_at)
+         VALUES ('BTC', ?1, ?2, ?3)
+         ON CONFLICT (underlying, ts) DO UPDATE SET dvol = excluded.dvol, ingested_at = excluded.ingested_at`
+      )
+        .bind(point.hourTs, point.close, now)
+        .run();
+    }
+    /* eslint-enable no-await-in-loop */
 
-    return { streamId: "deribit_rest:dvol:BTC", rowsWritten: 1, watermarkTs: hourTs };
+    const last = points.at(-1)!;
+    await upsertLatestSnapshot(env, "dvol:BTC", { v: last.close, ts: last.hourTs, ingested_at: now });
+
+    return { streamId: "deribit_rest:dvol:BTC", rowsWritten: points.length, watermarkTs: last.hourTs };
   }
 };

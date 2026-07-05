@@ -367,3 +367,40 @@ docs/14 Phase 2 の前提作業を行い、本番状態を確認した。
   レート制限と判断。DoD #1 (品質スコア≥99%) を脅かす継続的障害ではない
 - OI (07-03開始)・LS (07-04開始) ともまだ数日分のみで、これに依存する featureは実質評価不能のまま
   — liq-cascade-rebound (EC-006) の DATA 待ち解除はもうしばらく先
+
+## 8. バグ修正 (2026-07-05, ユーザー報告)
+
+### deribit_rest:dvol:BTC が11時間連続でHTTP 429 → 恒久的データ欠損バグを修正
+
+- 現象: 本番 Data Health 画面で `deribit_rest:dvol:BTC` が品質スコア0%・連続エラー11・open issue 6件
+  (ユーザーのスクリーンショットで発見)。本番D1確認で 2026-07-04 16:15 UTC の成功以降、毎時のtickが
+  すべて `HTTP 429 (after 429 retry)` で失敗し続けていたことを確認 (`options_surface` の最終書き込みが
+  16:15 で止まっていた)。過去の dq_issues 履歴からも「3連続→6連続→6連続→11連続」と悪化傾向
+- 原因調査で見つけた設計バグ: `deribitDvolAdapter` は毎回固定 `now - 2h` の窓だけを問い合わせ、
+  返ってきた複数のデータ点のうち**最後の1点しか `options_surface` に書き込んでいなかった**。
+  2時間を超える障害 (今回のような429の連続) が起きると、障害が明けて次に成功しても直近1点しか
+  復旧できず、間の欠損が恒久的に残る設計になっていた (他の全アダプタも同じ「固定窓・自己修復なし」
+  方式だが、5m/1h tierの他ストリームは短時間の一過性障害しか経験していなかったため露見していなかった)
+- 修正 (`workers/ingest/src/adapters/deribit.ts`): 遡及窓を2h→24hに拡大し、`parseDvol`→`parseDvolPoints`
+  に変更して返ってきた全データ点を `options_surface` へupsert (D1の `ON CONFLICT` upsertなので
+  重複再取得は安全)。次回の成功tickで直近24hのギャップを丸ごと埋められるようになった
+  (今回の11時間程度の障害ならこれで完全に復旧できる射程)。単体テストも配列版に追随、ingest 70テスト
+  全緑・typecheck/lint緑
+
+### Explorer: Safari (iOS) で "SyntaxError: The string did not match the expected pattern"
+
+- 現象: 本番Explorerでデータセットを選択すると、iOS Safari で
+  `Invalid Error: Opening file '...' failed with error: SyntaxError: The string did not match the
+  expected pattern` (ユーザーのスクリーンショットで発見)。ユーザーは当初「全部Binanceデータだから」
+  と推測していたが、カタログのデータセット名に "BINANCE" が含まれるのは意図通り (`curated/market/
+  candles_*` は data.binance.vision 由来の過去バックフィル、docs/03 §2.1 — ライブAPIとは別の
+  ブロックされていない静的アーカイブ) で無関係と判明
+- 原因: `apps/web/src/lib/duckdb-lake.ts` の `registerFileURL` に root-relative パス
+  (`/api/v1/lake/{key}`) をそのまま渡していた。Safari の `URL` パーサは Chromium と異なり、
+  base無しの相対URLをこの文脈で受け付けず上記エラーで拒否する — このサンドボックスの検証は
+  Chromiumのみだったため (かつ jsdelivr ブロックでそもそも `read_parquet` まで到達できなかったため)
+  発見できなかった
+- 修正: `location.origin` を前置して絶対URL化し、パスセグメントごとに `encodeURIComponent` する
+  (将来キー名に記号が入っても安全なように)。typecheck/lint緑。jsdelivr ブロックのため、この
+  サンドボックス内では修正後の完全なE2E確認はできていない — 修正が対象とするエラー文言とは
+  完全に一致する診断のため、実ブラウザでの再検証をユーザーに依頼
