@@ -4,7 +4,7 @@
 // client doesn't need to know about that, only `credentials: "include"`
 // so the browser sends whatever Access has set.
 
-import type { CreateEdgeRequest } from "@cryptoedge/schema";
+import type { CreateEdgeRequest, CreateEdgeVersionRequest } from "@cryptoedge/schema";
 
 const BASE = "/api/v1";
 
@@ -223,6 +223,11 @@ export const api = {
     return request<{ edges: EdgeSummary[] }>(`/edges${suffix}`);
   },
   getEdge: (edgeId: string) => request<EdgeDetail>(`/edges/${edgeId}`),
+  createVersion: (edgeId: string, body: CreateEdgeVersionRequest) =>
+    request<{ version_id: string }>(`/edges/${edgeId}/versions`, {
+      method: "POST",
+      body: JSON.stringify(body)
+    }),
   transitionEdge: (edgeId: string, to_status: string, reason: string) =>
     request<{ edge_id: string; from_status: string; to_status: string; reason: string }>(
       `/edges/${edgeId}/transitions`,

@@ -1,11 +1,12 @@
 // SCR-03 Edge Dossier (docs/06 §3). V1 slice: Thesis + 評価履歴
 // (run/verdict/wf:oos指標) + Paper タブ最小版 (paper_signals一覧, docs/15
-// SONNET-5) — Versions/Related タブはまだ実装せず。評価履歴は 2026-07
-// レビュー Task 8 で追加。
+// SONNET-5) + 新バージョンを作るフォーム (docs/15 Priority 1) — 差分diff表示や
+// Related タブはまだ実装せず。評価履歴は 2026-07 レビュー Task 8 で追加。
 
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
-import { EDGE_TRANSITION_GRAPH, type EdgeStatus } from "@cryptoedge/schema";
+import { createEdgeVersionRequestSchema, EDGE_DIRECTIONS, EDGE_TRANSITION_GRAPH, type EdgeStatus } from "@cryptoedge/schema";
 import { api, type PaperSignal, type RunSummary, type Readiness } from "../../api/client";
 import { formatUtcTimestamp } from "../../lib/format";
 import {
@@ -119,6 +120,199 @@ function PaperSignalEntry({ signal }: { signal: PaperSignal }) {
   );
 }
 
+// 新バージョンを作る (docs/06 SCR-03 ワイヤーフレーム, docs/15 Priority 1):
+// edge_version 作成の唯一の正規経路。Edge Pack v1 Phase 1 の5件はD1直接投入
+// (ユーザー承認の一時対応)で入れたため、Phase 2以降の恒久フローとしてはこの
+// フォームが無いと signal_spec を投入する手段が存在しなかった。
+const DEFAULT_COST_MODEL = JSON.stringify({ taker_bps: 4, slippage_bps: 2, funding_included: false }, null, 2);
+
+function CreateVersionForm({ edgeId, onCreated }: { edgeId: string; onCreated: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [semver, setSemver] = useState("1.0.0");
+  const [instrumentId, setInstrumentId] = useState("BTCUSDT.BINANCE.PERP");
+  const [direction, setDirection] = useState<string>("long");
+  const [horizon, setHorizon] = useState("24h");
+  const [signalSpecText, setSignalSpecText] = useState(
+    JSON.stringify(
+      { when: { cmp: [{ feature: "ret_24h" }, ">", 5] }, entry: { delay_bars: 1, price: "open" }, exit: { horizon: "24h" }, direction: "long" },
+      null,
+      2
+    )
+  );
+  const [paramsText, setParamsText] = useState("{}");
+  const [costModelText, setCostModelText] = useState(DEFAULT_COST_MODEL);
+  const [changelog, setChangelog] = useState("");
+  const [errors, setErrors] = useState<string[]>([]);
+
+  const createVersion = useMutation({
+    mutationFn: (body: Parameters<typeof api.createVersion>[1]) => api.createVersion(edgeId, body),
+    onSuccess: () => {
+      setOpen(false);
+      onCreated();
+    }
+  });
+
+  function handleSubmit() {
+    setErrors([]);
+    let signalSpec: unknown;
+    let params: unknown;
+    let costModel: unknown;
+    try {
+      signalSpec = JSON.parse(signalSpecText);
+    } catch {
+      setErrors(["signal_spec: JSONとして解析できません"]);
+      return;
+    }
+    try {
+      params = JSON.parse(paramsText);
+    } catch {
+      setErrors(["params: JSONとして解析できません"]);
+      return;
+    }
+    try {
+      costModel = JSON.parse(costModelText);
+    } catch {
+      setErrors(["cost_model: JSONとして解析できません"]);
+      return;
+    }
+
+    const candidate = {
+      semver,
+      signal_spec: signalSpec,
+      params,
+      instrument_id: instrumentId,
+      direction,
+      horizon,
+      cost_model: costModel,
+      ...(changelog.trim() ? { changelog: changelog.trim() } : {})
+    };
+    const result = createEdgeVersionRequestSchema.safeParse(candidate);
+    if (!result.success) {
+      setErrors(result.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`));
+      return;
+    }
+    createVersion.mutate(result.data);
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700"
+      >
+        ＋ 新バージョンを作る
+      </button>
+    );
+  }
+
+  return (
+    <section className="space-y-3 rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium text-slate-400">新バージョンを作る</h2>
+        <button onClick={() => setOpen(false)} className="text-xs text-slate-500 hover:text-slate-300">
+          閉じる
+        </button>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <label className="space-y-1 text-xs text-slate-500">
+          semver
+          <input
+            value={semver}
+            onChange={(e) => setSemver(e.target.value)}
+            className="w-full rounded border border-slate-700 bg-slate-950 p-1.5 text-sm text-slate-200"
+          />
+        </label>
+        <label className="space-y-1 text-xs text-slate-500">
+          instrument_id
+          <input
+            value={instrumentId}
+            onChange={(e) => setInstrumentId(e.target.value)}
+            className="w-full rounded border border-slate-700 bg-slate-950 p-1.5 text-sm text-slate-200"
+          />
+        </label>
+        <label className="space-y-1 text-xs text-slate-500">
+          direction
+          <select
+            value={direction}
+            onChange={(e) => setDirection(e.target.value)}
+            className="w-full rounded border border-slate-700 bg-slate-950 p-1.5 text-sm text-slate-200"
+          >
+            {EDGE_DIRECTIONS.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-1 text-xs text-slate-500">
+          horizon
+          <input
+            value={horizon}
+            onChange={(e) => setHorizon(e.target.value)}
+            className="w-full rounded border border-slate-700 bg-slate-950 p-1.5 text-sm text-slate-200"
+          />
+        </label>
+      </div>
+      <label className="block space-y-1 text-xs text-slate-500">
+        signal_spec (JSON)
+        <textarea
+          value={signalSpecText}
+          onChange={(e) => setSignalSpecText(e.target.value)}
+          rows={8}
+          className="w-full rounded border border-slate-700 bg-slate-950 p-2 font-mono text-xs text-slate-300"
+        />
+      </label>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <label className="block space-y-1 text-xs text-slate-500">
+          params (JSON)
+          <textarea
+            value={paramsText}
+            onChange={(e) => setParamsText(e.target.value)}
+            rows={3}
+            className="w-full rounded border border-slate-700 bg-slate-950 p-2 font-mono text-xs text-slate-300"
+          />
+        </label>
+        <label className="block space-y-1 text-xs text-slate-500">
+          cost_model (JSON)
+          <textarea
+            value={costModelText}
+            onChange={(e) => setCostModelText(e.target.value)}
+            rows={3}
+            className="w-full rounded border border-slate-700 bg-slate-950 p-2 font-mono text-xs text-slate-300"
+          />
+        </label>
+      </div>
+      <label className="block space-y-1 text-xs text-slate-500">
+        changelog (任意)
+        <input
+          value={changelog}
+          onChange={(e) => setChangelog(e.target.value)}
+          className="w-full rounded border border-slate-700 bg-slate-950 p-1.5 text-sm text-slate-200"
+        />
+      </label>
+      {errors.length > 0 && (
+        <ul className="space-y-0.5 text-xs text-reject">
+          {errors.map((e) => (
+            <li key={e}>{e}</li>
+          ))}
+        </ul>
+      )}
+      {createVersion.isError && (
+        <p className="text-xs text-reject">
+          {createVersion.error instanceof Error ? createVersion.error.message : "バージョン作成に失敗しました"}
+        </p>
+      )}
+      <button
+        onClick={handleSubmit}
+        disabled={createVersion.isPending}
+        className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-sm hover:bg-slate-700 disabled:opacity-50"
+      >
+        検証してバージョン作成
+      </button>
+    </section>
+  );
+}
+
 export function EdgeDetailScreen() {
   const { edgeId } = useParams({ from: "/edges/$edgeId" });
   const queryClient = useQueryClient();
@@ -215,6 +409,8 @@ export function EdgeDetailScreen() {
           </div>
         )}
       </section>
+
+      <CreateVersionForm edgeId={edgeId} onCreated={() => queryClient.invalidateQueries({ queryKey: ["edge", edgeId] })} />
 
       {data.current_version && (
         <section className="space-y-3 rounded border border-slate-800 bg-slate-900 p-4">

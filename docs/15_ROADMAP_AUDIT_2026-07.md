@@ -318,3 +318,52 @@ V1 完了後に、SONNET-1/6 で解除される DATA 待ちの状況と合わせ
 - 上記2件の修正後、typecheck/lint/test (api・web) 全緑、`vite build` 出力サイズ 2.6MB を再確認。
   ブラウザ実機再検証でも、CDN到達不能時にエラーが正しく表示されることを確認 (無限ハングの解消)
 - typecheck/lint/test (api・web) 全緑、`vite build` 本番ビルドも成功確認済み
+
+## 7. 研究フェーズ移行 (2026-07-05): Priority 1-3
+
+SONNET-1〜8完了後、「アプリ開発フェーズ」から「Edge研究・検証フェーズ」への移行にあたり
+実施した3件。docs/06 SCR-03 ワイヤーフレームの唯一の未実装要素だった signal_spec 投入UIを埋め、
+docs/14 Phase 2 の前提作業を行い、本番状態を確認した。
+
+### Priority 1 (完了): Edge Dossier に「新バージョンを作る」フォーム
+
+- `apps/web/src/screens/edge-detail/EdgeDetailScreen.tsx` に `CreateVersionForm` を追加。
+  semver/instrument_id/direction/horizon の入力欄 + signal_spec/params/cost_model の JSON textarea
+  (cost_modelは既存規約のデフォルト値 `{"taker_bps":4,"slippage_bps":2,"funding_included":false}`
+  を初期値に)。投入前に `createEdgeVersionRequestSchema` (zod) で検証し、EdgeBoardScreen の
+  literature_import 貼り付けフォームと同じエラー表示パターンを踏襲
+- `apps/web/src/api/client.ts` に `createVersion` を追加。既存 `POST /edges/:id/versions` (実装済み)
+  をそのまま呼ぶだけで新規バックエンド変更は不要だった
+- **重要**: これで Edge Pack v1 Phase 1 で使った D1 直接投入 (ユーザー承認の一時対応) を経由せず、
+  恒久フロー (API経由) で signal_spec を投入できるようになった。Phase 2 以降は全てこのUI経由で行う
+- ブラウザ実機検証: `wrangler dev --local --var ENVIRONMENT:development` (本番 wrangler.jsonc の
+  `vars.ENVIRONMENT=production` だと Cloudflare Access 未設定時にmutatingリクエストが401で拒否される
+  ため、ローカル検証専用に `--var` でオーバーライド。コミットする設定ファイルは変更していない) +
+  `vite dev` + Playwright (Chromium) で、テスト用Edge作成→フォーム入力→バージョン作成→
+  「現在のバージョン」に反映→スクリーン/フル評価ボタンの出現、まで実際にブラウザで確認。
+  不正JSON入力時のエラー表示も確認
+- 検証中に本番相当のバグは発見せず (ローカルテスト用Edgeも自動的にクリーンアップ対象の一時データ)
+
+### Priority 2 (前提作業のみ完了): Edge Pack v1 Phase 2/3 の準備
+
+- `research/src/cryptoedge_research/features/registry.py` に docs/14 §4.8 の `weekly_high_dist`
+  FeatureDef を追加 (既存 `rolling_high_dist` を window=168 (7d) で再利用、新規opは不要)。
+  research テストスイート187件全通過 (期待列リストが `FEATURES` から動的生成されるため追随)
+- Phase 3 (FOMC 2件) は econ_calendar データ投入済みだが、本番D1で `events` テーブルがまだ0件と判明
+  — 原因はバグではなく、TASK-4 (yahoo/etherscan/econ_calendar の3アダプタ追加) のデプロイが
+  2026-07-04 の 01:20 UTC 日次枠より後だったため、デプロイ後の最初の実行機会 (01:20 UTC daily tier)
+  がまだ来ていなかった (SONNET-3 実行ログで既知)。2026-07-05 時点でもまだ0件のままで、当日 01:20 UTC
+  の発火をこのセッション内では待ちきれなかった。次回セッションで再確認し、投入されていれば
+  sell-the-news-fomc-drift (delay_bars=1、安全) から着手し、pre-fomc-drift は負の delay_bars
+  対応可否の評価器確認が先 (docs/14 §4.10)
+- Phase 2 の weekly-breakout-continuation 自体の signal_spec 投入・screen実行は次回セッションへ
+  (features_sync の再計算サイクルを経てからの方が確実なため、今回は前提コードのみ)
+
+### Priority 3: 本番状態の確認 (読み取りのみ)
+
+- eval_runs: 15件全件確認、**verdictはすべてREJECT** (screen 11・full 3) — EEPゲートは機能している
+- `okx_rest:candles_1m` の3ストリームで HTTP 429 の連続エラーを検出したが、`consecutive_errors`が
+  リセットされており (2→1)、同ティックの funding_rate/open_interest は成功していることから一過性の
+  レート制限と判断。DoD #1 (品質スコア≥99%) を脅かす継続的障害ではない
+- OI (07-03開始)・LS (07-04開始) ともまだ数日分のみで、これに依存する featureは実質評価不能のまま
+  — liq-cascade-rebound (EC-006) の DATA 待ち解除はもうしばらく先

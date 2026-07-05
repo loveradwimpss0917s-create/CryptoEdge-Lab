@@ -59,6 +59,12 @@ FEATURES: list[FeatureDef] = [
         "high_24h_dist", "high,close", "1h", 24, "price",
         lambda df: ops.rolling_high_dist(df["high"], df["close"], _BARS_PER_DAY),
     ),
+    # docs/14 §4.8 weekly-breakout-continuation: same op as high_24h_dist,
+    # just a 7d window -- no new operator needed.
+    FeatureDef(
+        "weekly_high_dist", "high,close", "1h", 7 * _BARS_PER_DAY, "price",
+        lambda df: ops.rolling_high_dist(df["high"], df["close"], 7 * _BARS_PER_DAY),
+    ),
     FeatureDef(
         "taker_buy_ratio_24h", "taker_buy_volume,volume", "1h", 24, "price",
         lambda df: ops.rolling_ratio(df["taker_buy_volume"], df["volume"], _BARS_PER_DAY),
