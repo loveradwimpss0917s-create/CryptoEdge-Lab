@@ -404,3 +404,26 @@ docs/14 Phase 2 の前提作業を行い、本番状態を確認した。
   (将来キー名に記号が入っても安全なように)。typecheck/lint緑。jsdelivr ブロックのため、この
   サンドボックス内では修正後の完全なE2E確認はできていない — 修正が対象とするエラー文言とは
   完全に一致する診断のため、実ブラウザでの再検証をユーザーに依頼
+
+### Explorer: 上記修正後、"Failed to open file" へ変化 (同日、追加調査)
+
+- 上記URL修正後にユーザーが再検証、`SyntaxError` は解消したが新たに
+  `Invalid Error: Opening file '...' failed with error: Failed to open file: ...` が発生
+- 切り分けのため `/api/v1/lake/catalog` や `/api/v1/data-health` を直接ブラウザナビゲーションで
+  開くテストをユーザーに依頼したところ両方とも「Not Found」表示。これは誤った切り分け方法だったと
+  判明 — これらは API エンドポイントであり、直接ナビゲーションすると Cloudflare の
+  `not_found_handling: single-page-application` が SPA シェル (index.html) を返し、
+  ロードされた React アプリ側のクライアントルーター (TanStack Router) がそのパスに一致する
+  画面を持たないため独自の "Not Found" を表示しているだけ (サーバ側のバグではない、
+  `apps/web/src/app/router.tsx` に該当ルートが無いことで確認)
+- 本題の "Failed to open file" は desktop ブラウザでも再現を確認 (Safari/iOS 固有ではない)。
+  開発者ツールでの実HTTPステータス確認はユーザー環境で困難だったため、既存コードの設計コメント
+  (`apps/web/src/api/client.ts`: 「Cloudflare Access はブラウザのデフォルト任せではなく
+  `credentials: "include"` を明示指定する必要がある」) から類推し、DuckDB-WASM 内部の
+  Range fetch がこの `credentials: "include"` を指定していないことが原因と推測
+- 修正 (`apps/web/src/lib/duckdb-lake.ts`): duckdb-wasm の worker スクリプトを読み込む前に、
+  同一オリジン宛のリクエストにのみ `credentials: "include"` を強制する `self.fetch` ラッパーを
+  blob 経由で注入 (jsdelivr/extensions.duckdb.org への CDN fetch は対象外 — ワイルドカード CORS
+  との組み合わせは fetch 仕様上 credentials 付きだと失敗するため、同一オリジン判定で除外)。
+  typecheck/lint緑、`vite build` 出力 2.7MB (25MiB制限内) を確認。この修正の効果は
+  ユーザーの実ブラウザでの再検証待ち — 推測に基づく修正であり確定ではない旨を明記

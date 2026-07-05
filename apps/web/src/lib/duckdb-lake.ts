@@ -24,8 +24,30 @@ function getDb(): Promise<duckdb.AsyncDuckDB> {
     try {
       const bundles = duckdb.getJsDelivrBundles();
       const bundle = await duckdb.selectBundle(bundles);
+      // Cloudflare Access (docs/01 §5) requires cookies to be sent
+      // explicitly with `credentials: "include"` -- apps/web/src/api/
+      // client.ts already documents this same requirement for the main
+      // thread's own fetches. DuckDB-WASM's internal httpfs fetch (for the
+      // Range requests against /api/v1/lake/{key}) doesn't set this, so
+      // it's patched in here before the real worker script loads --
+      // scoped to same-origin requests only, since forcing credentials on
+      // the jsdelivr/extensions.duckdb.org CDN fetches this same worker
+      // makes would break their wildcard CORS (`*` + credentials is
+      // disallowed by the fetch spec).
       const workerUrl = URL.createObjectURL(
-        new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" })
+        new Blob(
+          [
+            `const _f = self.fetch.bind(self);
+             self.fetch = (input, init) => {
+               const url = typeof input === "string" ? input : input.url;
+               return url.startsWith(${JSON.stringify(location.origin)})
+                 ? _f(input, { ...init, credentials: "include" })
+                 : _f(input, init);
+             };
+             importScripts("${bundle.mainWorker}");`
+          ],
+          { type: "text/javascript" }
+        )
       );
       const worker = new Worker(workerUrl);
       // A failed CDN fetch inside the worker (e.g. importScripts 404/network
