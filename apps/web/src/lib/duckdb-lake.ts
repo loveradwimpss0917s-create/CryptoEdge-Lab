@@ -4,10 +4,10 @@
 // server-side SQL surface, and free-text WHERE clauses from the Explorer UI
 // carry no injection risk (docs/01 §3.3 "サーバ計算なしで返す").
 //
-// Files are read straight off GET /api/v1/lake/{key} (docs/08 "Lake
-// パススルー"), which supports Range requests, so DuckDB-WASM's httpfs only
-// pulls the Parquet footer/row-groups it actually needs instead of
-// downloading the whole file.
+// Files are fetched whole from GET /api/v1/lake/{key} (docs/08 "Lake
+// パススルー") via the main thread's own `fetch` and handed to DuckDB as an
+// in-memory buffer (`registerFileBuffer`) -- see the 2026-07 note below on
+// why this replaced the original registerFileURL/httpfs approach.
 
 import * as duckdb from "@duckdb/duckdb-wasm";
 
@@ -24,30 +24,8 @@ function getDb(): Promise<duckdb.AsyncDuckDB> {
     try {
       const bundles = duckdb.getJsDelivrBundles();
       const bundle = await duckdb.selectBundle(bundles);
-      // Cloudflare Access (docs/01 §5) requires cookies to be sent
-      // explicitly with `credentials: "include"` -- apps/web/src/api/
-      // client.ts already documents this same requirement for the main
-      // thread's own fetches. DuckDB-WASM's internal httpfs fetch (for the
-      // Range requests against /api/v1/lake/{key}) doesn't set this, so
-      // it's patched in here before the real worker script loads --
-      // scoped to same-origin requests only, since forcing credentials on
-      // the jsdelivr/extensions.duckdb.org CDN fetches this same worker
-      // makes would break their wildcard CORS (`*` + credentials is
-      // disallowed by the fetch spec).
       const workerUrl = URL.createObjectURL(
-        new Blob(
-          [
-            `const _f = self.fetch.bind(self);
-             self.fetch = (input, init) => {
-               const url = typeof input === "string" ? input : input.url;
-               return url.startsWith(${JSON.stringify(location.origin)})
-                 ? _f(input, { ...init, credentials: "include" })
-                 : _f(input, init);
-             };
-             importScripts("${bundle.mainWorker}");`
-          ],
-          { type: "text/javascript" }
-        )
+        new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" })
       );
       const worker = new Worker(workerUrl);
       // A failed CDN fetch inside the worker (e.g. importScripts 404/network
@@ -83,18 +61,29 @@ export function escapeSqlLiteral(value: string): string {
 // `key` doubles as both the R2 object key and the virtual filename DuckDB
 // reads `read_parquet('{key}')` from -- registered once per key per page
 // load since re-registering is a no-op cost we'd rather just avoid.
+//
+// 2026-07: switched from `registerFileURL` (DuckDB-WASM's httpfs doing lazy
+// Range reads) to fetching the whole file and using `registerFileBuffer`.
+// The URL approach kept failing with "Failed to open file" in real
+// browsers because DuckDB-WASM's httpfs doesn't use `fetch` for its Range
+// reads at all -- it's compiled C++ calling synchronous `XMLHttpRequest`
+// (confirmed in the shipped `duckdb-browser-eh.worker.js`), so the earlier
+// same-origin `credentials: "include"` patch on `self.fetch` never touched
+// that code path. Fetching through the main thread's own `fetch`
+// (identical to api/client.ts, already proven to work) avoids DuckDB-WASM's
+// internal HTTP layer entirely -- tradeoff is a full download instead of a
+// partial one, acceptable for this app's Parquet file sizes (docs/13 §2.3).
 export async function queryLakeFile<T = Record<string, unknown>>(key: string, sql: string): Promise<T[]> {
   const db = await getDb();
   if (!registeredKeys.has(key)) {
-    // Safari's URL parser (unlike Chromium's) rejects a root-relative path
-    // like "/api/v1/lake/..." here with "SyntaxError: The string did not
-    // match the expected pattern" -- duckdb-wasm needs a fully qualified
-    // URL, not one resolved implicitly against the page's own location.
     const encodedPath = key
       .split("/")
       .map((segment) => encodeURIComponent(segment))
       .join("/");
-    await db.registerFileURL(key, `${location.origin}/api/v1/lake/${encodedPath}`, duckdb.DuckDBDataProtocol.HTTP, false);
+    const res = await fetch(`${location.origin}/api/v1/lake/${encodedPath}`, { credentials: "include" });
+    if (!res.ok) throw new Error(`Failed to fetch lake file '${key}': HTTP ${res.status}`);
+    const buffer = new Uint8Array(await res.arrayBuffer());
+    await db.registerFileBuffer(key, buffer);
     registeredKeys.add(key);
   }
   const conn = await db.connect();

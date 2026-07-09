@@ -431,3 +431,32 @@ docs/14 Phase 2 の前提作業を行い、本番状態を確認した。
   との組み合わせは fetch 仕様上 credentials 付きだと失敗するため、同一オリジン判定で除外)。
   typecheck/lint緑、`vite build` 出力 2.7MB (25MiB制限内) を確認。この修正の効果は
   ユーザーの実ブラウザでの再検証待ち — 推測に基づく修正であり確定ではない旨を明記
+
+### Explorer: "Failed to open file" 再発 (2026-07-09、ユーザー再検証で確定)
+
+- ユーザーが実機 (iOS) で再検証、上記 `self.fetch` 修正後も全く同じ
+  `Invalid Error: Opening file '...' failed with error: Failed to open file: ...` が発生
+  (スクリーンショットで確認)。つまり上記修正は効果なし — 推測が外れていた
+- 原因を確定するため、本サンドボックス内で `node_modules/@duckdb/duckdb-wasm` が実際に配布する
+  `dist/duckdb-browser-eh.worker.js` (アプリが読み込むのと同じバージョン 1.32.0) を直接調査:
+  Parquet の Range読み取り (`openFile` 内の HTTP ファイルオープン処理) は `fetch` を一切使わず、
+  Emscripten がコンパイルした C++ から同期 `XMLHttpRequest` を呼び出している。つまり前回の
+  `self.fetch` パッチはこのコードパスに一切触れておらず、実際に影響したのは
+  (元々認証不要の) CDN 上の wasm バイナリ取得の `fetch` 呼び出しのみだった — 前回の推測の
+  誤りが判明
+- 自前の `apps/api/src/routes/lake.ts` 側のRange処理は疑いが晴れた: `lakeRoute.request()` を
+  `HEAD` + `Range: bytes=0-` (duckdb-wasm が実際に送るのと同じプローブ) で直接テストし、
+  意図通り `206` + 正しい `Content-Length`/`Content-Range` を返すことを確認済み
+- 修正 (`apps/web/src/lib/duckdb-lake.ts`): `registerFileURL` (duckdb-wasm 内部の
+  XHR ベース httpfs に読み取りを任せる方式) をやめ、ファイル全体をメインスレッドの
+  `fetch` (`credentials: "include"`、`api/client.ts` と同一パターンで既に本番で動作実績あり) で
+  取得し `registerFileBuffer` で渡す方式に変更。これにより duckdb-wasm 内部の HTTP/認証層を
+  完全に迂回する。トレードオフは部分読み取りではなく全量ダウンロードになる点だが、本アプリの
+  Parquet ファイルサイズ (docs/13 §2.3) では許容範囲と判断
+  (旧 `self.fetch` パッチのコードは削除 — 実質何もしていなかったため)
+- typecheck/lint/test (`apps/api` 85件・`apps/ingest` 73件・`apps/web` 4件、計15タスク) 全緑、
+  `vite build` 出力 568KB (25MiB制限内) を確認。本サンドボックスは production の
+  `*.workers.dev` へのネットワークアクセスがプロキシポリシーでブロックされているため、
+  今回も実ブラウザでの最終確認はユーザー依頼 — ただし今回の修正は「推測」ではなく
+  実際に配布されるDuckDB-WASMバンドルのソースコードを直接読んで特定した確定的な原因に対する
+  対処であり、確度は前回より高い
