@@ -1,0 +1,189 @@
+# 19. Sonnet 実装計画 — そのまま渡せるタスクカード集 (2026-07-05)
+
+> **位置づけ**: docs/18 (Master Roadmap) の各タスクを、実装専任の Sonnet セッションへ
+> そのまま渡せる粒度に展開したもの。1タスク = 1セッションを想定。
+> 順序と依存は docs/18 §3 が正典。本書はカードの中身のみを持つ。
+
+## 0. 共通実装規約 (全タスク冒頭に必ず適用)
+
+1. 必読: 対象タスクの「関連docs」列 + docs/17 (監査) の該当節
+2. 新パターンを発明しない。アダプタは `workers/ingest/src/adapters/` + `schedule.ts` 登録方式、
+   APIは `apps/api/src/routes/` の Hono ルート方式、research ジョブは `jobs/` + workflow yml 方式
+3. edge_version / eval の作成は必ず API 経由 (UIフォームまたは将来の Service Token)。
+   **D1 直接 INSERT は禁止** (Edge Pack v1 Phase 1 限りの一時対応だった — ユーザー指示)
+4. 完了手順: `pnpm turbo run typecheck test lint` 全緑 (research変更時は
+   `research/.venv/bin/python -m pytest` も) → コミット → designated branch へ push →
+   main への反映はユーザー承認後 → deploy.yml の Deploy 2ステップ成功確認 → 本番D1で読み取り検証
+5. 本番で新規に外部APIを叩くアダプタは「1タスク1本」。デプロイ後の実tickでスキーマ検証し、
+   失敗したら修正コミットを重ねる (SONNET-1 で確立したサイクル)
+6. UI変更時は `wrangler dev --local` + `vite dev` + Playwright (Chromium,
+   `/opt/pw-browsers` 配下) で実際にブラウザ操作して確認。ローカルAccess回避は
+   `--var ENVIRONMENT:development` (設定ファイルは変更しない)
+7. 結果は docs/19 の該当カードに「実行ログ」節を追記する (docs/15 方式の継承)
+
+---
+
+## Phase R1: V1 クローズアウト
+
+### S-01: deploy.yml Smoke test の 302 恒常失敗を解消
+
+- **WHY**: CI が毎回赤のため「本物の失敗」が埋もれる (docs/17 Z-6)。Asset too large 事故
+  (f2ad81b) の際も全体 conclusion は普段と同じ failure で、ステップを開かないと区別できなかった
+- **WHAT**: `.github/workflows/deploy.yml` の Smoke test ステップを修正。
+  `/api/v1/healthz` が Cloudflare Access 配下で 302 を返すのが原因なので、
+  (a) `curl -H` で Access Service Token を付ける (S-20 完了後) か、
+  (b) 当面は「302 も『Workerが応答している』証拠」として 200/302 を成功扱いにする。
+  まず (b) を実装し、S-20 後に (a) へ置換するTODOコメントを残す
+- **DONE**: main への push で deploy.yml が緑になる
+- **受入条件**: 直近 run が conclusion=success。かつ Worker を意図的に壊さない限り
+  緑であり続けることをもう1回のデプロイで確認
+- **関連docs**: docs/12, docs/17 §2 Z-6
+
+### S-02: dq_issues 解決フロー
+
+- **WHY**: 未解決40件が Action Queue / Data Health の信号を汚している (docs/17 §3.1-2)
+- **WHAT**: (1) ingest Worker: `touchIngestState` で status='ok' 遷移時に、同一 stream_id の
+  未解決 dq_issues を `resolved_at=now` で自動クローズ (DQ-02/DQ-TASK-DEAD 系)。
+  (2) api: `POST /api/v1/dq-issues/:id/resolve` (手動クローズ、Access保護)。
+  (3) Data Health 画面に「解決」ボタン。(4) 既存の40件は retire 済みソース由来が大半なので、
+  migration 0008 で `binance_rest/bybit_rest/coingecko` 系 stream の未解決 issue を一括 resolve
+- **DONE**: 本番の未解決件数が「現役ストリームの実問題」のみになる
+- **受入条件**: `SELECT COUNT(*) FROM dq_issues WHERE resolved_at IS NULL` が
+  実問題 (deribit等) の件数と一致。ストリーム回復→自動resolve を1件実証
+- **関連docs**: docs/03 §6, docs/06 SCR-05, docs/15 SONNET-7 記録
+
+### S-03: イベント履歴バックフィル (最重要)
+
+- **WHY**: events が前方収集のみのため、イベント系Edge全てが歴史サンプルゼロで評価不能
+  (docs/17 §3.1-1, ADR-1)。P0シード2件 (V1-3) と docs/14 Phase 3 のブロッカー
+- **WHAT**: research 側に `jobs/events_backfill.py` を新設し、workflow (`research-on-demand`
+  の manual input か専用 yml) から実行。3種を再構成して `POST /internal/events`
+  (無ければ internal ルート追加) 経由で D1 へ:
+  (1) `cme_gap`: yahoo_finance の BTC=F 日足履歴 (2019〜) から金曜close vs 日曜spot open、
+  既存 `workers/ingest/src/adapters/yahoo-finance.ts` の判定ロジック (vol_adj<2% 等) を
+  Python に忠実移植。判定閾値は adapter と定数を共有できないため、golden 1件で両実装の
+  一致を確認する。(2) `usdt_mint`: etherscan の Tether Treasury 履歴 (≥$1B) — API上限に
+  注意しページング。(3) `fomc`: 2019〜2025 の公式過去日程 (federalreserve.gov は
+  research-worker (GitHub Actions) からは到達可能 — Workers egress 制約とは別)。
+  dedupe_key は adapter と同一規約にし、前方収集と衝突しないこと
+- **DONE**: events に cme_gap ~300件 / usdt_mint 数十件 / fomc ~56件 規模の歴史行
+- **受入条件**: 本番D1 `SELECT event_type, COUNT(*), MIN(ts) FROM events GROUP BY 1` で
+  3種とも2019年台のts。cme-gap-fill の eval が「イベント0件エラー」を出さず走る
+- **関連docs**: docs/17 ADR-1, docs/14 §4.10-4.12, docs/09 §3
+
+### S-04: P0シード残2件の評価完了
+
+- **WHY**: V1-3。S-03 完了で評価可能になる
+- **WHAT**: ユーザーに UIフォームからの eval 実行を依頼 (cme-gap-fill / usdt-mint-drift は
+  edge_version 作成済み・signal_spec正 — docs/15 SONNET-3 で確認済み)。Sonnet は
+  結果 (n/EV/Sharpe/DSR/p_perm/verdict) を本番D1で検証し docs/19 に記録。状態遷移はユーザー判断
+- **DONE/受入条件**: 2件に verdict 行。V1-3 の表を更新
+- **関連docs**: docs/09 §3, docs/15 SONNET-3
+
+### S-05: V1 DoD 7日実測レポート
+
+- **WHY**: V1-1/V1-2 の実証。V1完了宣言の根拠文書
+- **WHAT**: S-01/S-02 デプロイ後7日間を計測窓とし、(a) Data Health API の品質スコア日次記録
+  (7日分、disabled除く全ストリーム)、(b) `quota_usage` 7日分 vs docs/13 §1 予算表、
+  (c) 再現性8点 (docs/02 §6) を utc-2123-drift で1件実記録。結果を docs/18 §2 の表に書き込み、
+  レポート本文は docs/19 本カードの実行ログ節へ
+- **DONE**: docs/18 §2 V1表の全行に実測値ベースの ✅/❌
+- **受入条件**: ❌ が残る場合、各々に是正タスクの起票があること
+- **関連docs**: docs/09 §2, docs/13 §1, docs/02 §6
+
+### S-06: deribit 72時間ルール適用
+
+- **WHY**: 429 が13時間継続中 (監査時点)。binance 型の恒久ブロックか判定が必要 (ADR-6)
+- **WHAT**: 72h 経過時点の ingest_state を確認。(a) 回復していれば S-06 をクローズし、
+  b7c6090 の24hバックフィルで欠損が埋まったことを options_surface で確認。
+  (b) 継続中なら第一段: `STREAMS_1H` → `STREAMS_1D` へ移して頻度を 1/24 に落とし24h観察。
+  (c) それでも429なら retire (migration で deribit_rest を disabled + docs/03 追記 +
+  Data Health 折りたたみ行き)。retire 時は S-19 (VRP) を「不可」で自動クローズ
+- **DONE**: 3分岐のいずれかが実施され記録されている
+- **受入条件**: Data Health から deribit の赤表示が消える (回復 or disabled)
+- **関連docs**: docs/17 §3.2-5 / ADR-6, docs/03 §2.1
+
+### S-07: Explorer クローズアウト
+
+- **WHY**: credentials 修正 (28a1797) まで2段の推測修正の効果が未確認 (docs/17 §3.3-11)
+- **WHAT**: ユーザーの実ブラウザ確認を待つ。NG の場合: lake ルートに一時診断を追加
+  (受信した Cookie 有無・Range ヘッダを console.log し `wrangler tail` で観察) して
+  実際の失敗点を特定してから修正する。**これ以上の推測修正の積み重ねは禁止**
+- **DONE**: 実ブラウザでヒストグラム表示成功のユーザー確認
+- **受入条件**: iOS Safari と desktop の両方で成功報告。診断コードは撤去してからクローズ
+- **関連docs**: docs/15 §8, docs/17 ADR-3
+
+## Phase R2: V1.5 (代表カードのみ抜粋 — 残りは同形式で起票済みの docs/18 §3 表に従う)
+
+### S-08: Edge Pack Phase 2 screen (weekly-breakout + round-number)
+
+- **WHY**: 追加実装ほぼゼロで評価母数+2 (docs/14 §4.8-4.9)
+- **WHAT**: `weekly_high_dist` FeatureDef は投入済み (53092cf)。features_sync 再計算を
+  workflow 実行で確認 → ユーザーがUIから signal_spec 投入 (docs/14 の JSON をそのまま) →
+  screen。round-number は `ops.round_number_dist` 新設 + FeatureDef + 同フロー
+- **DONE/受入条件**: 2件に screen verdict。falsification 想定 (REJECT でも成功) を報告に明記
+- **関連docs**: docs/14 §4.8-4.9
+
+### S-10: defillama アダプタ (残アダプタ第1弾)
+
+- **WHY**: 分類C解除の開始。キー不要で最安 (docs/15 SONNET-6 が次点候補と明記済み)
+- **WHAT**: `adapters/defillama.ts` (stablecoin mcap → `stable.usdt_mcap` /
+  `stable.total_stable_mcap`、metric_defs 登録済み)。`STREAMS_1D` 登録。
+  実tickでのスキーマ検証サイクル (共通規約5) を厳守
+- **DONE/受入条件**: 本番 metrics テーブルに日次行。Data Health で品質スコア表示
+- **関連docs**: docs/03 §2.3, docs/15 SONNET-6
+
+### S-15: Feature live ミラー (paper trading の cmp 対応)
+
+- **WHY**: paper trading が feature 参照Edgeを扱えない構造制約の解消 (docs/17 §3.1-3)
+- **WHAT**: features_sync.py の最後で、各 instrument の最新1行 (全feature値) を
+  `POST /internal/feature-latest` (新設) → `latest_snapshots` へ (key 例:
+  `feature:{instrument}:{name}`)。ingest 側 `signals/paper-trading.ts` の
+  `buildLiveDslInput` が cmp ノード評価時にこれを読む。**鮮度ガード必須**:
+  スナップショットが 2h より古い場合は fail-closed (発火させずログ) — 捏造しない原則
+- **DONE**: cmp を含む PAPER Edge がシグナルを記録できる
+- **受入条件**: 単体テスト (鮮度ガード含む) + ローカルE2Eで cmp Edge の発火を実証
+- **関連docs**: docs/15 SONNET-5, docs/17 §3.1-3
+
+### S-16: funding コストのバックテスト反映
+
+- **WHY**: funding保有系Edgeの経済性が系統的に歪む (docs/14 §1.3)
+- **WHAT**: `research/eval/backtest.py` の CostModel に funding を追加。保有期間中の
+  実 funding_rate 系列 (funding_rates テーブル、8h毎) を方向符号付きで積算し ret_net へ。
+  `cost_model.funding_included=true` の version のみ適用 (後方互換)。
+  ingest 側 paper-trading.ts の `roundTripCostBps` にも同モデルを移植し PAPER/FULL の
+  比較可能性を維持 (funding はhorizon依存なので固定bpsではなく実効値で)
+- **DONE**: funding-rate-mean-reversion を funding_included=true で再評価できる
+- **受入条件**: golden テスト (既知の funding 系列での期待値一致)。既存 false 指定の
+  結果が変わらないこと (回帰)
+- **関連docs**: docs/14 §1.3/§4.5, docs/05
+
+### S-20: Access Service Token 認証
+
+- **WHY**: kasotubot / CI / エージェントの機械認証を1本化 (docs/17 ADR-2)。S-23 の前提
+- **WHAT**: `middleware/require-access.ts` を拡張: `CF-Access-Client-Id/Secret` ヘッダ
+  由来の service token JWT (Access が `Cf-Access-Jwt-Assertion` に載せる、`sub` が空で
+  `common_name` を持つ) を許容し、`userEmail` の代わりに `service:{common_name}` を
+  actor として記録。ユーザーには Cloudflare ダッシュボードでの token 発行手順を依頼
+  (Sonnet は検証用 curl 手順を提示)。audit ログの actor 区別を確認
+- **DONE**: token 付き curl で `POST /api/v1/edges/:id/eval` が通る
+- **受入条件**: token 無し・不正 token が 401。既存ブラウザフローに回帰なし
+  (access-jwt.test.ts に service token ケース追加)
+- **関連docs**: docs/01 §5, docs/17 ADR-2
+
+### (同形式で起票済み: S-09 FOMC 2件+cpi修正 / S-11 fred / S-12 coinmetrics /
+S-13 farside+tronscan判断 / S-14 LS/OIバックフィル再試行 / S-17 dom_in /
+S-18 D1 retention / S-19 VRP要承認 / S-21 wrangler v4 / S-22 wasm R2自己ホスト —
+各カードの WHY/依存 は docs/18 §3、詳細設計の参照先は docs/14 §4.10-4.14・docs/17 §3)
+
+## Phase R3: kasotubot 連携 (S-23〜S-26)
+
+カードの実体は docs/20 §6 に置く (契約と実装を1箇所で管理するため)。着手条件: S-20 完了 +
+ユーザーによる kasotubot 側方針の確認。
+
+## S-90: docs 小修正バッチ (随時)
+
+- **WHAT**: docs/17 §4 の「小修正」判定分 — docs/02 列追記 / docs/06 実装済み注記 /
+  docs/14 §1.1 件数注記 / docs/10 リスク2件追記 / README に docs/17-20 への導線。
+  docs/15 冒頭に「凍結済み」バナーを追加
+- **受入条件**: docs/17 §4 表の「小修正」行が全て解消
