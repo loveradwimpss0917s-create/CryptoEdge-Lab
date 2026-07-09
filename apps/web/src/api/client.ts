@@ -243,6 +243,8 @@ export const api = {
   readinessSummary: () => request<ReadinessSummary>("/edges/readiness-summary"),
   getLatestPack: (kind: string) => request<PackContent>(`/packs/${kind}/latest`),
   dataHealth: () => request<DataHealth>("/data-health"),
+  resolveDqIssue: (issueId: number) =>
+    request<{ issue_id: number; status: string }>(`/data-health/${issueId}/resolve`, { method: "POST" }),
   actionQueue: () => request<{ items: ActionItem[] }>("/actions"),
   lakeCatalog: () => request<{ datasets: LakeCatalogEntry[] }>("/lake/catalog"),
   createEdge: (body: CreateEdgeRequest) =>

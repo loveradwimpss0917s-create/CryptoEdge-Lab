@@ -93,3 +93,47 @@ describe("GET /data-health (docs/15 SONNET-4)", () => {
     expect(body.open_issues).toHaveLength(0);
   });
 });
+
+describe("POST /data-health/:id/resolve (docs/19 S-02)", () => {
+  it("marks an open issue resolved and drops it from open_issues", async () => {
+    const now = Date.now();
+    await env.DB.prepare(
+      `INSERT INTO dq_issues (detected_at, stream_id, rule_id, severity, status) VALUES (?1, 's1', 'DQ-02', 'critical', 'open')`
+    )
+      .bind(now)
+      .run();
+    const issueId = (await env.DB.prepare(`SELECT issue_id FROM dq_issues WHERE stream_id = 's1'`).first<{
+      issue_id: number;
+    }>())!.issue_id;
+
+    const res = await dataHealthRoute.request(`/${issueId}/resolve`, { method: "POST" }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { issue_id: number; status: string };
+    expect(body.status).toBe("resolved");
+
+    const health = await dataHealthRoute.request("/", {}, env);
+    const healthBody = (await health.json()) as { open_issues: unknown[] };
+    expect(healthBody.open_issues).toHaveLength(0);
+  });
+
+  it("is idempotent for an already-resolved issue", async () => {
+    const now = Date.now();
+    await env.DB.prepare(
+      `INSERT INTO dq_issues (detected_at, stream_id, rule_id, severity, status, resolved_at)
+       VALUES (?1, 's1', 'DQ-02', 'critical', 'resolved', ?1)`
+    )
+      .bind(now)
+      .run();
+    const issueId = (await env.DB.prepare(`SELECT issue_id FROM dq_issues WHERE stream_id = 's1'`).first<{
+      issue_id: number;
+    }>())!.issue_id;
+
+    const res = await dataHealthRoute.request(`/${issueId}/resolve`, { method: "POST" }, env);
+    expect(res.status).toBe(200);
+  });
+
+  it("404s for a non-existent issue", async () => {
+    const res = await dataHealthRoute.request("/999999/resolve", { method: "POST" }, env);
+    expect(res.status).toBe(404);
+  });
+});

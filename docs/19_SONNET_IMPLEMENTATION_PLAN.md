@@ -43,14 +43,38 @@
 
 - **WHY**: 未解決40件が Action Queue / Data Health の信号を汚している (docs/17 §3.1-2)
 - **WHAT**: (1) ingest Worker: `touchIngestState` で status='ok' 遷移時に、同一 stream_id の
-  未解決 dq_issues を `resolved_at=now` で自動クローズ (DQ-02/DQ-TASK-DEAD 系)。
-  (2) api: `POST /api/v1/dq-issues/:id/resolve` (手動クローズ、Access保護)。
-  (3) Data Health 画面に「解決」ボタン。(4) 既存の40件は retire 済みソース由来が大半なので、
-  migration 0008 で `binance_rest/bybit_rest/coingecko` 系 stream の未解決 issue を一括 resolve
+  未解決 dq_issues を `resolved_at=now` で自動クローズ (DQ-02/DQ-TASK-DEAD 系、`env.DB.batch`で
+  upsertと同一batchに)。
+  (2) api: `POST /api/v1/data-health/:id/resolve` (手動クローズ、Access保護、`dq_issue.resolve`
+  監査ログ)。
+  (3) Data Health 画面 Open Issues リストに「解決」ボタン。(4) 既存の128件は retire 済みソース
+  由来が大半なので、migration 0008 で `binance_rest/bybit_rest/coingecko` 系 stream の未解決
+  issue を一括 resolve
 - **DONE**: 本番の未解決件数が「現役ストリームの実問題」のみになる
 - **受入条件**: `SELECT COUNT(*) FROM dq_issues WHERE resolved_at IS NULL` が
   実問題 (deribit等) の件数と一致。ストリーム回復→自動resolve を1件実証
 - **関連docs**: docs/03 §6, docs/06 SCR-05, docs/15 SONNET-7 記録
+- **実行ログ (2026-07-09)**: 実装完了。api 85件・ingest 73件のテスト green。migration 0008 は
+  未適用 (次回デプロイで自動適用)
+
+### S-91: eval_runs スタックジョブ監視 (新規タスク、監査で発見)
+
+- **WHY**: `jobs` テーブルには `STUCK_DISPATCHED_MS` による自己修復 (internal.ts) があるが、
+  `eval_runs.status='running'` には同等の仕組みがなく、research-worker がverdict提出前に
+  死ぬ (Actions runner timeout/OOM/workflow cancel) と永久に'running'のまま残る。
+  2026-07-09 監査で `cme-futures-gap-fill` run (`run_id=01KWN7C33MZ94ZRP26F659R0D5`) が
+  2026-07-04 00:10:07 から133時間超'running'のまま放置されているのを発見
+- **WHAT**: `apps/api/src/services/eval-runs.ts` に `reapStuckEvalRuns(env)` を新設。
+  `started_at` が6時間 (screen/full runは通常分単位で終わる) 以上前で`status='running'`のままの
+  行を`status='timeout'`, `finished_at=now`に更新。`jobs`同様、専用cronを新設せず
+  `GET /api/v1/edges` (Explorerの一覧読み込み) の冒頭で毎回呼び出す lazy self-heal 方式
+- **DONE**: 放置run_idが検出されたその日のうちに'timeout'へ遷移する。新規のスタックrunも
+  Explorer画面を1回開けば自動的に片付く
+- **受入条件**: `SELECT COUNT(*) FROM eval_runs WHERE status='running' AND started_at < (now - 6h)`
+  が本番デプロイ後の次回Explorerアクセスで0件になる
+- **関連docs**: docs/17 §3 (新規発見のP0候補として追記予定), docs/01 §4.6 (jobsの既存パターン)
+- **実行ログ (2026-07-09)**: 実装完了。`apps/api/src/services/eval-runs.test.ts` 3件green
+  (stuck→timeout / fresh→無変化 / done→無変化)
 
 ### S-03: イベント履歴バックフィル (最重要)
 

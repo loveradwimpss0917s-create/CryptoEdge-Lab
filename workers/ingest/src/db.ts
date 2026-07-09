@@ -177,15 +177,24 @@ export async function touchIngestState(
   status: string
 ): Promise<void> {
   const now = Date.now();
-  await env.DB.prepare(
-    `INSERT INTO ingest_state (stream_id, watermark_ts, last_run_at, last_status, consecutive_errors)
-     VALUES (?1, ?2, ?3, ?4, 0)
-     ON CONFLICT (stream_id) DO UPDATE SET
-       watermark_ts = excluded.watermark_ts, last_run_at = excluded.last_run_at,
-       last_status = excluded.last_status, consecutive_errors = 0`
-  )
-    .bind(streamId, watermarkTs, now, status)
-    .run();
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO ingest_state (stream_id, watermark_ts, last_run_at, last_status, consecutive_errors)
+       VALUES (?1, ?2, ?3, ?4, 0)
+       ON CONFLICT (stream_id) DO UPDATE SET
+         watermark_ts = excluded.watermark_ts, last_run_at = excluded.last_run_at,
+         last_status = excluded.last_status, consecutive_errors = 0`
+    ).bind(streamId, watermarkTs, now, status),
+    // docs/19 S-02: a stream recovering is exactly the signal that its
+    // open dq_issues (DQ-02 stale-stream, DQ-TASK-DEAD retry-exhausted)
+    // are no longer live problems -- close them here instead of leaving
+    // them to accumulate forever (128 open rows found live, 2026-07-09
+    // audit). Historical rows stay queryable via resolved_at, not deleted.
+    env.DB.prepare(`UPDATE dq_issues SET status = 'resolved', resolved_at = ?1 WHERE stream_id = ?2 AND status = 'open'`).bind(
+      now,
+      streamId
+    )
+  ]);
 }
 
 /** Returns the resulting consecutive_errors count so callers can decide whether to escalate (DQ-02). */

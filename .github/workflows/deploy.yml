@@ -43,15 +43,31 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: Smoke test — api Worker responds after deploy
+        # docs/19 S-01 / docs/17 Z-6: this hostname sits behind a Cloudflare
+        # Access Zero Trust Application, which gates every request at the
+        # edge before it ever reaches our Worker -- so an unauthenticated
+        # curl from this runner can never see a real 200 from
+        # /api/v1/healthz (Access itself returns 302/403 first, regardless
+        # of what our own requireAccess middleware would decide). Treating
+        # only 200 as "healthy" makes this step permanently red and masks
+        # real failures (e.g. the Asset-too-large deploy break, f2ad81b).
+        # 200/302/403 all mean "the edge responded as designed"; anything
+        # else (5xx, curl connection failure) is a real outage.
+        # TODO (docs/19 S-20): once Access Service Token auth lands, curl
+        # with CF-Access-Client-Id/Secret here to get a real 200 and
+        # restore an actual end-to-end health check instead of this
+        # edge-reachability check.
         run: |
           for i in 1 2 3 4 5; do
             status=$(curl -s -o /dev/null -w "%{http_code}" https://cryptoedge-api.loveradwimps-s0917s.workers.dev/api/v1/healthz)
-            if [ "$status" = "200" ]; then
-              echo "healthz OK"
-              exit 0
-            fi
+            case "$status" in
+              200|302|403)
+                echo "healthz responded $status (edge reachable)"
+                exit 0
+                ;;
+            esac
             echo "attempt $i: healthz returned $status, retrying..."
             sleep 5
           done
-          echo "healthz did not return 200 after deploy"
+          echo "healthz did not respond after deploy (last status: $status)"
           exit 1

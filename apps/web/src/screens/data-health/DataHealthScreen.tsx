@@ -1,10 +1,14 @@
 // SCR-05 Data Health (docs/06 §3, docs/15 SONNET-4). V1 slice: the
-// source×stream quality-score grid + open issues list from the wireframe.
-// [手動リフィル実行] / [ソース無効化] are not implemented -- both need new
-// mutating endpoints this pass doesn't add (docs/06 SCR-05 wireframe still
-// names them as follow-up work).
+// source×stream quality-score grid + open issues list from the wireframe,
+// plus a manual [解決] button per issue (docs/19 S-02) -- most issues
+// close themselves automatically when their stream next succeeds
+// (workers/ingest touchIngestState), this is for ones that won't (a
+// permanently retired source, or a human who's already investigated).
+// [手動リフィル実行] / [ソース無効化] are still not implemented -- both need
+// different new mutating endpoints this pass doesn't add (docs/06 SCR-05
+// wireframe still names them as follow-up work).
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type StreamHealth } from "../../api/client";
 import { formatUtcTimestamp } from "../../lib/format";
 
@@ -36,10 +40,15 @@ function StreamCell({ stream }: { stream: StreamHealth }) {
 }
 
 export function DataHealthScreen() {
+  const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery({
     queryKey: ["data-health"],
     queryFn: api.dataHealth,
     refetchInterval: 60_000
+  });
+  const resolveIssue = useMutation({
+    mutationFn: (issueId: number) => api.resolveDqIssue(issueId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["data-health"] })
   });
 
   return (
@@ -114,6 +123,14 @@ export function DataHealthScreen() {
                 <span className="text-slate-300">{issue.rule_id}</span>
                 <span className="text-slate-500">{issue.stream_id}</span>
                 <span className="text-slate-600">{formatUtcTimestamp(issue.detected_at)}</span>
+                <button
+                  type="button"
+                  className="ml-auto rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:border-slate-500 hover:text-slate-100 disabled:opacity-50"
+                  disabled={resolveIssue.isPending && resolveIssue.variables === issue.issue_id}
+                  onClick={() => resolveIssue.mutate(issue.issue_id)}
+                >
+                  {resolveIssue.isPending && resolveIssue.variables === issue.issue_id ? "解決中…" : "解決"}
+                </button>
               </li>
             ))}
           </ul>

@@ -80,6 +80,13 @@
    両方が同じ仕組みで解決する。認証ミドルウェアへの追加は小さい。→ S-20
 8. **wrangler v3 (v4警告が毎デプロイ出続けている)**。「critical errors を防ぐため更新せよ」
    という警告を無視し続ける状態は健全でない。→ S-21
+9. **eval_runs にスタックジョブ監視が無かった (2026-07-09 daily_briefing批評で発見、S-91で解消済み)**。
+   `jobs` テーブルには `STUCK_DISPATCHED_MS` による自己修復 (internal.ts) があるが、
+   `eval_runs.status='running'` には同等の仕組みが無く、research-worker がverdict提出前に
+   死ぬと永久に'running'のまま残る。`cme-futures-gap-fill` run
+   (`run_id=01KWN7C33MZ94ZRP26F659R0D5`) が133時間超放置されていた。
+   `reapStuckEvalRuns` (`apps/api/src/services/eval-runs.ts`) を `GET /edges` の
+   lazy self-healとして追加し解消。
 
 ### 3.3 P2 — 保守性・品質
 

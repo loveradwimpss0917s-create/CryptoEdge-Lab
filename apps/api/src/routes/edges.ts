@@ -15,6 +15,7 @@ import type { Env } from "../env.js";
 import type { AccessVariables } from "../middleware/require-access.js";
 import { audit } from "../services/audit.js";
 import { attemptTransition } from "../services/edge-lifecycle.js";
+import { reapStuckEvalRuns } from "../services/eval-runs.js";
 import { computeReadinessForEdges, type EdgeReadinessInputRow } from "../services/readiness.js";
 
 // Matches workers/ingest/src/index.ts's GITHUB_REPO — both Workers dispatch
@@ -24,6 +25,7 @@ const GITHUB_REPO = "loveradwimpss0917s-create/CryptoEdge-Lab";
 export const edgesRoute = new Hono<{ Bindings: Env; Variables: AccessVariables }>();
 
 edgesRoute.get("/", async (c) => {
+  await reapStuckEvalRuns(c.env);
   const query = listEdgesQuerySchema.parse(Object.fromEntries(new URL(c.req.url).searchParams));
   const conditions: string[] = [];
   const params: unknown[] = [];
