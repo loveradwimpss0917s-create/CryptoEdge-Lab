@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { computeCmeGap, parseYahooDailyBars, type YahooChartResponse } from "./yahoo-finance.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { computeCmeGap, parseYahooDailyBars, yahooCmeGapAdapter, type YahooChartResponse } from "./yahoo-finance.js";
+import type { Env } from "../env.js";
 
 function chart(timestamp: number[], open: (number | null)[], close: (number | null)[]): YahooChartResponse {
   return { chart: { result: [{ timestamp, indicators: { quote: [{ open, close }] } }], error: null } };
@@ -46,5 +47,30 @@ describe("computeCmeGap", () => {
   it("returns null with fewer than 2 bars", () => {
     expect(computeCmeGap([{ ts: 0, open: 100, close: 100 }])).toBeNull();
     expect(computeCmeGap([])).toBeNull();
+  });
+});
+
+describe("yahooCmeGapAdapter (docs/17/19: browser-like headers, 2026-07-11)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends a browser-like User-Agent/Accept -- Yahoo's unofficial API is known to reject non-browser clients", async () => {
+    // chart()'s timestamps are Yahoo's raw seconds (parseYahooDailyBars
+    // multiplies by 1000) -- one day apart here, so computeCmeGap sees no
+    // gap and run() returns before touching env.DB, keeping this test
+    // focused on the fetch headers alone.
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(chart([0, 86_400], [100, 101], [101, 102])), { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await yahooCmeGapAdapter.run({} as Env);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers["User-Agent"]).toMatch(/Mozilla/);
+    expect(headers.Accept).toBe("application/json");
   });
 });

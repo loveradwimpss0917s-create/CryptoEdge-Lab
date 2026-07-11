@@ -70,13 +70,27 @@ export function computeCmeGap(bars: DailyBar[]): CmeGapEvent | null {
   return { ts: curr.ts, magnitudePct: ((curr.open - prev.close) / prev.close) * 100, gapDays };
 }
 
+// 2026-07-11 (docs/17/19 follow-up): this stream had failed 6 consecutive
+// daily ticks with HTTP 429 (live production ingest_state check) -- Yahoo's
+// unofficial chart API is widely known to reject requests that don't look
+// like they come from a browser (no realistic User-Agent/Accept), which
+// Cloudflare Workers' default `fetch` doesn't send. Added the headers a
+// browser would send; this is the best available fix without live traffic
+// to confirm against (can't reach query1.finance.yahoo.com from this
+// sandbox), so worth re-checking ingest_state.consecutive_errors for this
+// stream after the next 1d tick.
+const BROWSER_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  Accept: "application/json"
+};
+
 export const yahooCmeGapAdapter: Adapter = {
   sourceId: "yahoo_finance",
   streamId: STREAM_ID,
   requestBudget: 1,
   async run(env): Promise<AdapterRunResult> {
     const url = "https://query1.finance.yahoo.com/v8/finance/chart/BTC=F?range=10d&interval=1d";
-    const bars = parseYahooDailyBars(await fetchJson<YahooChartResponse>(url));
+    const bars = parseYahooDailyBars(await fetchJson<YahooChartResponse>(url, { headers: BROWSER_HEADERS }));
     const gap = computeCmeGap(bars);
     if (!gap) return { streamId: STREAM_ID, rowsWritten: 0, watermarkTs: Date.now() };
 

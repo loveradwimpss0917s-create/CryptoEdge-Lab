@@ -460,3 +460,45 @@ docs/14 Phase 2 の前提作業を行い、本番状態を確認した。
   今回も実ブラウザでの最終確認はユーザー依頼 — ただし今回の修正は「推測」ではなく
   実際に配布されるDuckDB-WASMバンドルのソースコードを直接読んで特定した確定的な原因に対する
   対処であり、確度は前回より高い
+
+## 2026-07-11: 「円滑な利用に不足しているもの」の精査 (ユーザー依頼、S-92/S-93)
+
+S-01/S-02/S-91 の本番再確認 (D1直接クエリ) を起点に、稼働継続にとって現在支障になっている
+ものを洗い出した。
+
+### S-92: yahoo_finance (cme_gap) が6日連続429で死んでいた
+
+- `SELECT stream_id, last_status, consecutive_errors, last_run_at FROM ingest_state
+  WHERE consecutive_errors > 0` を本番D1に直接実行し全ストリームを棚卸し
+- `yahoo_finance:cme_gap:BTC1!.CME.FUT`: `consecutive_errors=6`、`last_status` は
+  `HTTP 429 (after 429 retry)`。このストリームは1dティア (1日1回、01:20 UTC) でしか動かないため、
+  6 は「6回のリトライ」ではなく**6日連続で毎日失敗**を意味する (リトライキューの再試行は
+  `ingest_state.consecutive_errors` を更新しない設計 — `workers/ingest/src/tasks.ts` 確認済み)
+- 影響: V1-3 DoD (P0シード5件の verdict) は残り2件がイベント履歴バックフィル待ち
+  (docs/18 §2, S-03/S-04) — その待ち先である `cme_gap` イベント自体がこの6日間ずっと
+  生成されていなかった。dq_issue が繰り返し立つノイズだけでなく、実質的な進捗ブロッカー
+- 原因診断: Yahoo Finance 非公式チャートAPIはブラウザらしくないリクエスト
+  (User-Agent/Acceptヘッダー無し) を拒否することが広く知られている一般的挙動。
+  `workers/ingest/src/adapters/types.ts` の共通 `fetchJson` はヘッダーを一切付与しない素の
+  `fetch` — Cloudflare Workers のデフォルト fetch はブラウザ的な User-Agent を送らない
+- 確認の限界: 本サンドボックスから `query1.finance.yahoo.com` および検証用の `stooq.com` への
+  アクセスがプロキシポリシーで遮断されており (403)、実トラフィックでの確認は不可能。
+  この修正は「Yahoo非公式APIは非ブラウザ的リクエストを拒否しやすい」という広く知られた
+  一般知識に基づく最有力な対処であり、確定原因の特定ではない
+- 修正 (`workers/ingest/src/adapters/yahoo-finance.ts`): ブラウザ相当の `User-Agent`/`Accept`
+  ヘッダーを付与。`yahoo-finance.test.ts` に fetch モックでヘッダー送信を検証するテストを追加
+- 次の1dティック (毎日01:20 UTC) 後に本番D1で `consecutive_errors` が0に戻るか要確認
+  (これが確認できなければ、原因はUAブロックとは別 — 純粋なIPベースのレート制限の可能性が高く、
+  Stooq CSV フォールバック (docs/03 §2.1 に設計は既に記載済み) の実装が次の一手になる)
+
+### S-93: Reactにルートエラー境界が皆無だった
+
+- `apps/web/src/app/router.tsx` を確認 — `ErrorBoundary`/`componentDidCatch` は全く存在せず、
+  TanStack Router の `errorComponent` も未設定だった。つまりどの画面でも未捕捉の例外
+  (例: Explorer の DuckDB 初期化失敗、想定外のAPIレスポンス形状) が発生すると、ナビゲーション
+  ごとアプリ全体が白画面になり、リロード以外の回復手段がない
+- 修正: `apps/web/src/app/RouteErrorFallback.tsx` を新設し、`rootRoute` に
+  `errorComponent: RouteErrorFallback` を設定。エラーメッセージ表示 + 「再試行」ボタン
+  (`reset()`) を持つ最小のフォールバックUI。react-refresh の ESLint ルール
+  (`only-export-components`) に従いコンポーネントを別ファイルに分離
+- typecheck/lint/test/build 全緑 (15タスク)

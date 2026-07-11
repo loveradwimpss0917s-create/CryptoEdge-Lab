@@ -1,12 +1,13 @@
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { Layout } from "./Layout";
+import { RouteErrorFallback } from "./RouteErrorFallback";
 import { TodayScreen } from "../screens/today/TodayScreen";
 import { EdgeBoardScreen } from "../screens/edge-board/EdgeBoardScreen";
 import { EdgeDetailScreen } from "../screens/edge-detail/EdgeDetailScreen";
 import { DataHealthScreen } from "../screens/data-health/DataHealthScreen";
 import { ExplorerScreen } from "../screens/explorer/ExplorerScreen";
 
-const rootRoute = createRootRoute({ component: Layout });
+const rootRoute = createRootRoute({ component: Layout, errorComponent: RouteErrorFallback });
 
 const todayRoute = createRoute({
   getParentRoute: () => rootRoute,
