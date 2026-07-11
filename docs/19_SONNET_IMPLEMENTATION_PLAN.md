@@ -94,6 +94,39 @@
 - **受入条件**: 本番D1 `SELECT event_type, COUNT(*), MIN(ts) FROM events GROUP BY 1` で
   3種とも2019年台のts。cme-gap-fill の eval が「イベント0件エラー」を出さず走る
 - **関連docs**: docs/17 ADR-1, docs/14 §4.10-4.12, docs/09 §3
+- **実行ログ (2026-07-11, Sonnet)**:
+  - 実装: `packages/schema/src/api/internal.ts` に `submitEventsRequestSchema` を追加、
+    `apps/api/src/routes/internal.ts` に `POST /internal/events` (dedupe_key で
+    `ON CONFLICT DO NOTHING` — ingest側の `upsertEvent` と同一規約、テスト2件)。
+    `research/.../io/internal_client.py` に `EventInput`/`submit_events()` を追加 (テスト1件)。
+    `research/.../jobs/events_backfill.py` を新設:
+    `backfill_cme_gap` (Yahoo Finance BTC=F 全期間日足 → `computeCmeGap` と同一ロジックを
+    Python移植、全履歴の連続ペアを走査してギャップを全件検出)、
+    `backfill_usdt_mint` (Etherscan Tether Treasury 転送履歴を1000件/pageでページング、
+    ゼロアドレス発のmintのみ抽出)。両方とも純粋ロジック関数はfixtureで単体テスト済み
+    (`test_events_backfill.py` 9件)、HTTPラッパーは `httpx.MockTransport` で検証。
+    `.github/workflows/events-backfill.yml` (workflow_dispatch のみ、手動実行)
+  - **fomc は未実装 — 意図的にブロック中**: `FOMC_HISTORICAL_DATES` は空リストのまま出荷
+    (`workers/ingest/src/adapters/econ-calendar.ts` の `ECON_CALENDAR` と全く同じ理由・同じ方針)。
+    本サンドボックスから `federalreserve.gov`/`stooq.com` 含む外部ホストへのネットワークアクセスが
+    プロキシポリシーで遮断されており (403)、2019〜2025年のFOMC会合日程を実データで検証できない。
+    本カード自身が「federalreserve.gov は research-worker (GitHub Actions) からは到達可能」と
+    明記している通り、これは実際のGitHub Actions実行環境 (実ネットワークあり) が担うべき仕事で、
+    このセッションで訓練データの記憶から日付を捏造すべきではない
+    (誤った日付は全てのイベント参照signal_specの評価を静かに壊す — econ-calendar.tsの既存方針)。
+    ユーザーが検証済みの日程リストを提供するか、実ネットワークのあるセッションで
+    federalreserve.gov の `fomchistorical{YYYY}.htm` から取得・検証してから
+    `FOMC_HISTORICAL_DATES` を埋めること
+  - **副産物のバグ修正**: `apps/api`/`workers/ingest` 両方の `FakeD1` テストダブルが
+    `.run()`/`.all()` の戻り値に `meta.changes` を含めておらず、「written = changes > 0」
+    という頻出パターン (touchIngestState の dq_issues 自動解決、upsertEvent 含む) を
+    実際にテストしようとすると `Cannot read properties of undefined (reading 'changes')` で
+    必ず落ちる状態だった (本番の実D1では問題なし、テストダブルのみの欠陥)。
+    `node:sqlite` の `stmt.run()` が元々 `{changes, lastInsertRowid}` を返すため、
+    それを `meta.changes` として再整形するだけで修正
+  - typecheck/lint/test 全緑: TS 15タスク (api 87件・ingest 74件・web 4件など)、
+    Python 197件 (ruff check 含む)。実際の本番実行 (GitHub Actions workflow_dispatch)
+    はfomc未完のため保留 — cme_gap/usdt_mintのみ先行実行するかはユーザー判断待ち
 
 ### S-04: P0シード残2件の評価完了
 

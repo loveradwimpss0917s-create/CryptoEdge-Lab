@@ -1,0 +1,33 @@
+name: events-backfill
+
+# docs/17 ADR-1, docs/19 S-03: one-time/occasional historical event
+# reconstruction (cme_gap, usdt_mint, fomc) -- `events` was forward-collect
+# only, so every event-referencing signal_spec (the remaining P0 seed
+# edges docs/18 V1-3 waits on) had zero historical samples to evaluate
+# against. Manual dispatch only, not scheduled: unlike lake-sync's
+# recurring candle backfill, this reconstructs a fixed historical window
+# once (re-running is safe/idempotent via dedupe_key, but there's nothing
+# new to backfill on a schedule the way there is for candles).
+on:
+  workflow_dispatch: {}
+
+jobs:
+  events-backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: research
+    env:
+      CRYPTOEDGE_API_URL: ${{ secrets.CRYPTOEDGE_API_URL }}
+      RESEARCH_API_TOKEN: ${{ secrets.RESEARCH_API_TOKEN }}
+      # Optional: usdt_mint backfill is skipped (logged, not failed) if unset.
+      ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.5.x"
+      - run: uv sync
+      - name: Backfill cme_gap / usdt_mint / fomc event history
+        run: uv run python -m cryptoedge_research.jobs.events_backfill

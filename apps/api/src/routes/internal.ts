@@ -11,6 +11,7 @@ import {
   submitAiOutputRequestSchema,
   submitCorrelationsRequestSchema,
   submitDerivMetricsRequestSchema,
+  submitEventsRequestSchema,
   submitFeatureDefsRequestSchema,
   submitFindingsRequestSchema,
   submitFundingRatesRequestSchema,
@@ -113,6 +114,36 @@ internalRoute.get("/events", async (c) => {
     .bind(from, to)
     .all();
   return c.json({ events: results ?? [] });
+});
+
+// Historical event backfill (docs/17 ADR-1, docs/19 S-03): shares the exact
+// dedupe_key convention the live ingest adapters use (`upsertEvent` in
+// workers/ingest/src/db.ts), so a backfilled row and a later live-collected
+// row for the same real-world event collide on ON CONFLICT DO NOTHING
+// instead of duplicating.
+internalRoute.post("/events", async (c) => {
+  const body = submitEventsRequestSchema.parse(await c.req.json());
+  const stmt = c.env.DB.prepare(
+    `INSERT INTO events (event_id, event_type, ts, announced_at, magnitude, payload, source_id, dedupe_key)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+     ON CONFLICT (dedupe_key) DO NOTHING`
+  );
+  const results = await c.env.DB.batch(
+    body.events.map((e) =>
+      stmt.bind(
+        newId(),
+        e.event_type,
+        e.ts,
+        e.announced_at ?? null,
+        e.magnitude ?? null,
+        e.payload ? JSON.stringify(e.payload) : null,
+        e.source_id,
+        e.dedupe_key
+      )
+    )
+  );
+  const written = results.filter((r) => (r.meta.changes ?? 0) > 0).length;
+  return c.json({ written, skipped: body.events.length - written }, 201);
 });
 
 // Daily regime labels (docs/04 §6) need to be forward-filled onto the bar

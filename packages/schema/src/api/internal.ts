@@ -218,6 +218,28 @@ export type SubmitLiquidationsRequest = z.infer<typeof submitLiquidationsRequest
 // GET /api/v1/packs/:kind/latest. Replaces an earlier
 // `briefing-ready`/`summary` stub that assumed a two-step
 // notify-then-generate flow docs/07's actual design never called for.
+// Historical event backfill (docs/17 ADR-1, docs/19 S-03): events was
+// forward-collect-only, so every event-referencing signal_spec had zero
+// historical samples to evaluate against. research-worker reconstructs
+// cme_gap/usdt_mint/fomc history and upserts it here, sharing the same
+// dedupe_key convention the live ingest adapters already use so backfilled
+// rows and future live rows never collide.
+export const eventInputSchema = z.object({
+  event_type: z.string().min(1),
+  ts: z.number().int(),
+  announced_at: z.number().int().nullable().optional(),
+  magnitude: z.number().nullable().optional(),
+  payload: z.record(z.string(), z.unknown()).nullable().optional(),
+  source_id: z.string().min(1),
+  dedupe_key: z.string().min(1)
+});
+export type EventInput = z.infer<typeof eventInputSchema>;
+
+export const submitEventsRequestSchema = z.object({
+  events: z.array(eventInputSchema).min(1)
+});
+export type SubmitEventsRequest = z.infer<typeof submitEventsRequestSchema>;
+
 export const submitAiOutputRequestSchema = z.object({
   kind: z.enum(AI_OUTPUT_KINDS),
   ref_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),

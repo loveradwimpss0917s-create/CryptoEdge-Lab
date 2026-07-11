@@ -84,6 +84,21 @@ class RegimeUpdateInput(BaseModel):
     model_version: str
 
 
+class EventInput(BaseModel):
+    """Historical event backfill (docs/17 ADR-1, docs/19 S-03) -- mirrors
+    workers/ingest/src/db.ts's EventInput/upsertEvent exactly, including the
+    dedupe_key convention, so a backfilled row and a later live-collected
+    row for the same real-world event collide instead of duplicating."""
+
+    event_type: str
+    ts: int
+    announced_at: int | None = None
+    magnitude: float | None = None
+    payload: dict[str, Any] | None = None
+    source_id: str
+    dedupe_key: str
+
+
 class FundingRateInput(BaseModel):
     instrument_id: str
     ts: int
@@ -296,6 +311,13 @@ class InternalApiClient:
 
     def submit_regimes(self, regimes: list[RegimeUpdateInput]) -> int:
         result = self._post("/internal/regimes", {"regimes": [r.model_dump(mode="json") for r in regimes]})
+        return result["written"]
+
+    def submit_events(self, events: list[EventInput]) -> int:
+        """Returns the number of rows actually written -- a row whose
+        dedupe_key already exists (backfill re-run, or collision with a
+        live-collected row) is silently skipped, not duplicated (docs/19 S-03)."""
+        result = self._post("/internal/events", {"events": [e.model_dump(mode="json") for e in events]})
         return result["written"]
 
     def submit_funding_rates(self, funding_rates: list[FundingRateInput]) -> int:

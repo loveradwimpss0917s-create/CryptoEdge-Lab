@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from cryptoedge_research.io.internal_client import (
+    EventInput,
     InternalApiClient,
     InternalApiError,
     RunMetricInput,
@@ -92,6 +93,39 @@ def test_submit_verdict_round_trips_reasons():
         ),
     )
     assert verdict == "ADOPT"
+
+
+def test_submit_events_serializes_optional_fields_and_dedupe_key():
+    """docs/19 S-03: events_backfill.py's contract with POST /internal/events --
+    field names/dedupe_key must match workers/ingest/src/db.ts's upsertEvent
+    exactly so a backfilled row and a later live-collected row collide."""
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"written": 1, "skipped": 0})
+
+    client = _client_with_handler(handler)
+    written = client.submit_events(
+        [
+            EventInput(
+                event_type="cme_gap",
+                ts=1546560000000,
+                magnitude=4.2,
+                payload={"magnitude_pct": 4.2, "gap_days": 3},
+                source_id="events_backfill",
+                dedupe_key="cme_gap:2019-01-04",
+            )
+        ]
+    )
+    assert written == 1
+    event = captured["body"]["events"][0]
+    assert event["dedupe_key"] == "cme_gap:2019-01-04"
+    assert event["source_id"] == "events_backfill"
+    # .nullable() on the TS schema side expects an explicit `null`, not an
+    # omitted key, for unset Optional fields (same Pydantic serialization
+    # quirk every other submit_* method on this page already works around).
+    assert event["announced_at"] is None
 
 
 def test_error_response_raises_internal_api_error():

@@ -62,6 +62,60 @@ describe("GET /internal/events", () => {
   });
 });
 
+describe("POST /internal/events (docs/17 ADR-1, docs/19 S-03)", () => {
+  it("inserts new events and reports them written", async () => {
+    const res = await internalRoute.request(
+      "/events",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          events: [
+            { event_type: "cme_gap", ts: 100, source_id: "events_backfill", dedupe_key: "cme_gap:2019-01-04" },
+            { event_type: "fomc", ts: 200, source_id: "events_backfill", dedupe_key: "fomc:2019-01-30" }
+          ]
+        })
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { written: number; skipped: number };
+    expect(body).toEqual({ written: 2, skipped: 0 });
+
+    const row = await env.DB.prepare(`SELECT event_type, ts FROM events WHERE dedupe_key = 'cme_gap:2019-01-04'`).first<{
+      event_type: string;
+      ts: number;
+    }>();
+    expect(row).toEqual({ event_type: "cme_gap", ts: 100 });
+  });
+
+  it("skips (not duplicates) an event whose dedupe_key already exists -- backfill vs. live-adapter collision", async () => {
+    await env.DB.prepare(
+      `INSERT INTO events (event_id, event_type, ts, source_id, dedupe_key) VALUES ('ev1', 'cme_gap', 100, 'yahoo_finance', 'cme_gap:2019-01-04')`
+    ).run();
+
+    const res = await internalRoute.request(
+      "/events",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          events: [{ event_type: "cme_gap", ts: 999, source_id: "events_backfill", dedupe_key: "cme_gap:2019-01-04" }]
+        })
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { written: number; skipped: number };
+    expect(body).toEqual({ written: 0, skipped: 1 });
+
+    const count = await env.DB.prepare(`SELECT COUNT(*) AS n FROM events WHERE dedupe_key = 'cme_gap:2019-01-04'`).first<{
+      n: number;
+    }>();
+    expect(count?.n).toBe(1);
+  });
+});
+
 describe("GET /internal/regimes (2026-07 review, TASK-1)", () => {
   it("rejects missing/invalid from-to params", async () => {
     const res = await internalRoute.request("/regimes?from=2026-07-01&to=not-a-date", {}, env);

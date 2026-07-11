@@ -21,6 +21,7 @@ type DatabaseSyncInstance = InstanceType<typeof DatabaseSync>;
 interface D1LikeResult<T = unknown> {
   results: T[];
   success: boolean;
+  meta: { changes: number };
 }
 
 class FakeStatement {
@@ -34,16 +35,24 @@ class FakeStatement {
     return new FakeStatement(this.db, this.sql, params);
   }
 
+  // `meta.changes` mirrors real D1's D1Result shape -- node:sqlite's own
+  // `.run()` already returns `{changes, lastInsertRowid}` directly, so this
+  // just re-shapes it rather than computing anything new. Without this,
+  // `upsertEvent`'s "written = changes > 0" check throws `Cannot read
+  // properties of undefined (reading 'changes')` the moment a test
+  // actually inspects its return value against FakeD1 (found while adding
+  // events_backfill support, docs/19 S-03) -- mirrors the same fix in
+  // apps/api/src/test-utils/fake-d1.ts.
   async run(): Promise<D1LikeResult> {
     const stmt = this.db.prepare(this.sql);
-    stmt.run(...(this.params as never[]));
-    return { results: [], success: true };
+    const { changes } = stmt.run(...(this.params as never[]));
+    return { results: [], success: true, meta: { changes: Number(changes) } };
   }
 
   async all<T>(): Promise<D1LikeResult<T>> {
     const stmt = this.db.prepare(this.sql);
     const results = stmt.all(...(this.params as never[])) as T[];
-    return { results, success: true };
+    return { results, success: true, meta: { changes: 0 } };
   }
 
   async first<T>(): Promise<T | null> {
