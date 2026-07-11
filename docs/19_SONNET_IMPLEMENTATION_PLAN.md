@@ -108,6 +108,30 @@
 - **実行ログ (2026-07-11, Sonnet)**: 実装完了、`edge-lifecycle.test.ts` 5件green (新規1件含む)。
   デプロイ後、ユーザーがUIから「月曜アジア開場効果」の → TESTING ボタンを押せば
   実際に遷移するはずなので、次のアクションとして案内する
+- **確認 (2026-07-11 追記)**: ユーザーが実際に本番UIで → TESTING を押し、edge_id
+  01KWHQ6YVR5164JVBPS8TQS657 が本番D1で `status='TESTING'` に遷移したことを確認 —
+  修正が実際に機能した。続けて full run が実行され `verdict=REJECT` で確定
+  (S-95 参照: このverdictがUIの案内文と噛み合わない別バグを誘発した)
+
+### S-95: FULL_DONE の案内文がverdictを無視していた (S-94の副次発見)
+
+- **WHY**: S-94 デプロイ後、ユーザーが「月曜アジア開場効果」で
+  「Research Readiness: FULL済み、次のアクション: verdictをレビュー→TESTING→VALIDATEDを判断」
+  という文言に従おうとしたが、「そのようなボタンが無い」と報告。実際には
+  full run の verdict が REJECT で確定しており (`canTransition` のガードは
+  ADOPT 以外を必ず拒否 — docs/05 §2)、VALIDATEDへの遷移ボタン自体は
+  `EDGE_TRANSITION_GRAPH` 通り表示されるが押しても失敗する。案内文がverdictの
+  中身を見ずに固定文言 (`apps/web/src/lib/labels.ts` の `nextActionLabel`)
+  を返していたため、ユーザーが正しい遷移 (→却下) に気づけなかった
+- **WHAT**: `nextActionLabel` に `latestFullVerdict` 引数を追加し、FULL_DONE の
+  文言を verdict 別に分岐 (ADOPT→VALIDATEDへ誘導 / REJECT・WATCH→却下へ誘導、
+  ADOPT以外はVALIDATEDに進めない旨を明記)。`EdgeDetailScreen.tsx` の
+  `ReadinessPanel` に既に取得済みの `data.runs` (直近5件、verdict込み) を渡し、
+  最新の full run の verdict を検索して算出 — 新規APIコールは不要
+- **DONE/受入条件**: `labels.test.ts` 新設 (4件: ADOPT/REJECT/WATCH/未確定の
+  各分岐)。typecheck/lint/test/build 全緑
+- **関連docs**: docs/06 §7.2
+- **実行ログ (2026-07-11, Sonnet)**: 実装完了・デプロイ待ち
 
 ### S-03: イベント履歴バックフィル (最重要)
 

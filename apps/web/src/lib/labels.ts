@@ -75,12 +75,26 @@ export const READINESS_STATE_BADGE_CLASS: Record<ReadinessState, string> = {
 
 // docs/06 §7.2 の「次に実行すべきアクションを1つだけ表示」。missing の中身
 // (feature/data/event 名) を埋め込み、具体的な文言にする。
-export function nextActionLabel(readiness: Readiness): string {
+//
+// `latestFullVerdict`: FULL_DONE の文言はかつて verdict に関わらず常に
+// 「TESTING→VALIDATEDを判断」という固定文言だった。verdict が REJECT/WATCH
+// (ADOPT 以外) の場合、TESTING→VALIDATED は `canTransition` のガード
+// (docs/05 §2 "full run の verdict = ADOPT") で必ず弾かれる — つまり
+// 案内文が実際には選べない遷移を「次のアクション」として示していた
+// (2026-07 ユーザー報告: 「月曜アジア開場効果」で実際にこの文言に従って
+// もVALIDATEDへ進めず、対応するボタンが無いように見えて混乱した)。
+export function nextActionLabel(
+  readiness: Readiness,
+  latestFullVerdict?: "ADOPT" | "WATCH" | "REJECT" | null
+): string {
   const { state, missing } = readiness;
   switch (state) {
     case "VALIDATED_PLUS":
       return "Dossierで証跡を確認";
     case "FULL_DONE":
+      if (latestFullVerdict === "ADOPT") return "verdict=採用 → 「→検証済み」ボタンでVALIDATEDへ";
+      if (latestFullVerdict === "REJECT" || latestFullVerdict === "WATCH")
+        return `verdict=${VERDICT_LABEL[latestFullVerdict]} (ADOPTではないためVALIDATEDには進めません) → 「→却下」ボタンで却下、または再評価を検討`;
       return "verdictをレビュー → TESTING→VALIDATEDを判断";
     case "SCREEN_DONE":
       return "screen結果をレビュー";

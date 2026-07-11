@@ -20,8 +20,13 @@ import {
 } from "../../lib/labels";
 
 // docs/06 §7: readiness の状態・不足要素・次アクションを1つだけ表示する。
-function ReadinessPanel({ readiness }: { readiness: Readiness }) {
+// `runs`: FULL_DONE の案内文を実際の verdict に応じて出し分けるため
+// (2026-07 ユーザー報告: verdict=REJECT でも常に「VALIDATEDを判断」と
+// 表示され、対応するボタンが無いように見えて混乱した -- labels.ts
+// nextActionLabel 参照)。
+function ReadinessPanel({ readiness, runs }: { readiness: Readiness; runs: RunSummary[] }) {
   const chips = missingElementsSummary(readiness.missing);
+  const latestFullVerdict = runs.find((r) => r.run_kind === "full" && r.verdict)?.verdict?.verdict ?? null;
   return (
     <section className="space-y-2 rounded border border-slate-800 bg-slate-900 p-4">
       <div className="flex items-center gap-2">
@@ -39,7 +44,7 @@ function ReadinessPanel({ readiness }: { readiness: Readiness }) {
           ))}
         </div>
       )}
-      <p className="text-sm text-slate-300">次のアクション: {nextActionLabel(readiness)}</p>
+      <p className="text-sm text-slate-300">次のアクション: {nextActionLabel(readiness, latestFullVerdict)}</p>
     </section>
   );
 }
@@ -372,7 +377,7 @@ export function EdgeDetailScreen() {
       </div>
       <p className="text-sm text-slate-500">{edge.category}</p>
 
-      {edge.readiness && <ReadinessPanel readiness={edge.readiness} />}
+      {edge.readiness && <ReadinessPanel readiness={edge.readiness} runs={data.runs} />}
 
       <section className="space-y-2 rounded border border-slate-800 bg-slate-900 p-4">
         <div>
