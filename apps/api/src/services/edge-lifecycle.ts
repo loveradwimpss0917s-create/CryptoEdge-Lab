@@ -37,8 +37,20 @@ async function latestScreenRun(
     .first<{ run_id: string }>();
   if (!run) return null;
 
+  // `ev_bps` lives under segment "overall" (the plain full-period figure),
+  // but `p_perm` only ever gets written under segment "wf:oos" --
+  // research/.../eval/pipeline.py's run_eep() computes exactly one
+  // permutation test, always tagged wf:oos, never "overall" (2026-07
+  // audit: this query used to filter segment='overall' for both metrics,
+  // so `p_perm` never matched any row and this function returned null
+  // unconditionally -- meaning CANDIDATE->TESTING could never pass
+  // regardless of an edge's actual screen results; found live, zero of
+  // the 7 CANDIDATE edges had ever recorded a transition attempt past
+  // IDEA->CANDIDATE despite several already clearing both real gates).
   const metrics = await env.DB.prepare(
-    `SELECT metric, value FROM eval_metrics WHERE run_id = ?1 AND segment = 'overall' AND metric IN ('ev_bps', 'p_perm')`
+    `SELECT metric, value FROM eval_metrics
+     WHERE run_id = ?1
+       AND ((segment = 'overall' AND metric = 'ev_bps') OR (segment = 'wf:oos' AND metric = 'p_perm'))`
   )
     .bind(run.run_id)
     .all<{ metric: string; value: number }>();

@@ -76,6 +76,39 @@
 - **実行ログ (2026-07-09)**: 実装完了。`apps/api/src/services/eval-runs.test.ts` 3件green
   (stuck→timeout / fresh→無変化 / done→無変化)
 
+### S-94: CANDIDATE→TESTING ゲートが構造的に通過不能だった (最重要バグ、監査で発見)
+
+- **WHY**: ユーザーから「まだ一つも候補 (CANDIDATE) から検証中 (TESTING) に移行できていない」と
+  指摘を受け、本番D1を直接調査。`edge_transitions` を全件確認したところ、記録されている遷移は
+  全7件とも `IDEA→CANDIDATE` のみで、`CANDIDATE→TESTING` の試行が**一度も記録されていなかった**。
+  UI (`EdgeDetailScreen.tsx`) には遷移ボタン自体は既に実装・表示されており、押せば
+  `POST /edges/:id/transition` は呼ばれる — つまりバックエンドのゲート判定が常に失敗する
+  実装バグだった
+- **原因**: `apps/api/src/services/edge-lifecycle.ts` の `latestScreenRun()` が
+  `eval_metrics` を `segment = 'overall'` かつ `metric IN ('ev_bps','p_perm')` で問い合わせていたが、
+  `research/.../eval/pipeline.py` の `run_eep()` は permutation test の結果を常に
+  `segment='wf:oos'` にしか書き込まず、`segment='overall'` の `p_perm` 行は一度も存在しない。
+  結果、`p_perm` は常に `undefined` となり `latestScreenRun()` は常に `null` を返し、
+  ガードコンテキストは常に `{screenRunEvBps: -Infinity, screenRunPPerm: 1}` に固定される —
+  つまりどのEdgeの実際の screen 結果が何であれ、このガードは**実装上絶対に合格しない**
+  設計になっていた。docs/05 §2 の記述自体も `overall.p_perm` と誤って書かれており
+  (2026-07 レビュー TASK-5 で記述された時点のミス)、コードとドキュメント両方が
+  同じ誤った前提を共有していた
+- **本番データでの実害確認**: 修正前のクエリで本番D1の CANDIDATE 6件の最新screen結果を確認したところ、
+  「月曜アジア開場効果」(edge_id=01KWHQ6YVR5164JVBPS8TQS657) が
+  `ev_bps(overall)=4.999 > 0` かつ `p_perm(wf:oos)=0.0647 < 0.20` で**両ゲートを実際にクリアしていた**
+  にもかかわらず、バグにより永久にCANDIDATEに留め置かれていた
+- **WHAT**: `latestScreenRun()` のSQLを `(segment='overall' AND metric='ev_bps') OR
+  (segment='wf:oos' AND metric='p_perm')` に修正。`pipeline.py`/docs/05 のコメント記述も
+  実際の書き込み先 (`wf:oos.p_perm`) に修正
+- **DONE/受入条件**: `edge-lifecycle.test.ts` に回帰テスト追加
+  (「`overall`セグメントのp_perm行だけではガードを満たさないこと」を明示的に検証)。
+  本番データ (月曜アジア開場効果) で修正後にガードが実際に合格することを事前検証済み
+- **関連docs**: docs/05 §2, docs/17 (次回監査で追記)
+- **実行ログ (2026-07-11, Sonnet)**: 実装完了、`edge-lifecycle.test.ts` 5件green (新規1件含む)。
+  デプロイ後、ユーザーがUIから「月曜アジア開場効果」の → TESTING ボタンを押せば
+  実際に遷移するはずなので、次のアクションとして案内する
+
 ### S-03: イベント履歴バックフィル (最重要)
 
 - **WHY**: events が前方収集のみのため、イベント系Edge全てが歴史サンプルゼロで評価不能

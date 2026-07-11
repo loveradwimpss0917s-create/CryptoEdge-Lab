@@ -53,11 +53,16 @@ class EepConfig:
 
 
 # docs/05 §2's state table: "CANDIDATE→TESTING | screen run (簡易EEP) で
-# ev_bps > 0 かつ p_perm < 0.20" -- a screen run only ever needs to move
-# those two `overall`-segment numbers, unlike a full run's ADOPT decision
-# (docs/05 §2 "TESTING→VALIDATED | full run の verdict = ADOPT"), which
-# reads the bootstrap-CI'd wf:oos metrics `decide_verdict` gates on. Before
-# this (2026-07 design audit TASK-5), on_demand.py never passed a
+# ev_bps > 0 かつ p_perm < 0.20" -- the gate reads `overall.ev_bps` (the
+# plain full-period figure below) and `wf:oos.p_perm` (there is only ever
+# one permutation test per run, always tagged wf:oos -- see below; a
+# 2026-07 corollary of this same audit found apps/api/src/services/
+# edge-lifecycle.ts had instead queried `overall.p_perm`, a row that never
+# existed, making CANDIDATE→TESTING structurally unpassable in production
+# regardless of an edge's actual results). Unlike a full run's ADOPT
+# decision (docs/05 §2 "TESTING→VALIDATED | full run の verdict = ADOPT"),
+# which reads the bootstrap-CI'd wf:oos metrics `decide_verdict` gates on.
+# Before this (2026-07 design audit TASK-5), on_demand.py never passed a
 # `run_kind`-specific config at all, so a "screen" run cost exactly as much
 # compute as a "full" one -- the opposite of what "簡易" (simplified) means,
 # and the actual bottleneck for bulk-screening the ~50 unseeded seed Edges.
