@@ -158,8 +158,17 @@
     `node:sqlite` の `stmt.run()` が元々 `{changes, lastInsertRowid}` を返すため、
     それを `meta.changes` として再整形するだけで修正
   - typecheck/lint/test 全緑: TS 15タスク (api 87件・ingest 74件・web 4件など)、
-    Python 197件 (ruff check 含む)。実際の本番実行 (GitHub Actions workflow_dispatch)
-    はfomc未完のため保留 — cme_gap/usdt_mintのみ先行実行するかはユーザー判断待ち
+    Python 197件 (ruff check 含む)
+  - **実行ログ追記 (2026-07-11、ユーザー承認の上で本番実行)**: `events-backfill.yml` を
+    workflow_dispatch で実行 (run 29169725916, 成功)。ログ:
+    `cme_gap: 410 candidate event(s), 410 newly written` /
+    `usdt_mint: skipped, ETHERSCAN_API_KEY not configured` /
+    `fomc: skipped, FOMC_HISTORICAL_DATES is empty`。
+    本番D1で確認: `events` テーブルに `cme_gap` 410件 (ts range 2019-01-07〜2026-07-11) が
+    実在。Yahoo Finance の実APIへの初回本番接続が成功し、コード側の懸念
+    (fixtureとの形式差異によるジョブ失敗) は杞憂に終わった。
+    `usdt_mint` はユーザーが `ETHERSCAN_API_KEY` シークレットを設定後、
+    workflow_dispatch を再実行すれば同様に動く見込み (コードは実装済み・テスト済み)
 
 ### S-04: P0シード残2件の評価完了
 
