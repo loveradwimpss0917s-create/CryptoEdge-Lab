@@ -192,6 +192,17 @@
 - **DONE**: 3分岐のいずれかが実施され記録されている
 - **受入条件**: Data Health から deribit の赤表示が消える (回復 or disabled)
 - **関連docs**: docs/17 §3.2-5 / ADR-6, docs/03 §2.1
+- **実行ログ (2026-07-11, Sonnet) — 分岐(a)で判断、close**: 本番D1の `dq_issues`
+  (stream_id LIKE 'deribit_rest%') を時系列で確認したところ、2026-07-03〜2026-07-11の
+  8日間、検知→解決を繰り返す**断続的429**パターンで、binance_rest/bybit_rest/coingecko
+  (migration 0007 で実際に恒久ブロックと確定・disabled化) のような「一度も回復しない」
+  パターンとは明確に異なる。現在 `ingest_state.watermark_ts` も直近数時間以内まで
+  進んでおり (データは実際に流れている)、`dq_issues` の open件数は0件 (全50件resolved)。
+  これは `workers/ingest/src/adapters/types.ts` の `jitterDelay` コメントが説明する
+  「Cloudflare Workers共有egress IPプールによる、こちら側のバーストが無くても起こる
+  ノイズ」パターンと一致し、`consecutive-errors.ts` が429を通常障害より高い閾値(6)で
+  扱っている設計判断とも整合する。**降格・retireの必要なし — 既存のリトライ+S-02自動解決
+  インフラで適切に吸収されている。分岐(b)/(c)は不要と判断してclose**
 
 ### S-07: Explorer クローズアウト
 
