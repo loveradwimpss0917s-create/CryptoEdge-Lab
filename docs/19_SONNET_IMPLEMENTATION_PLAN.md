@@ -386,6 +386,288 @@ S-18 D1 retention / S-19 VRP要承認 / S-21 wrangler v4 / S-22 wasm R2自己ホ
 カードの実体は docs/20 §6 に置く (契約と実装を1箇所で管理するため)。着手条件: S-20 完了 +
 ユーザーによる kasotubot 側方針の確認。
 
+## Phase RS: 研究OS化 (S-100〜S-110) — docs/21 の実装カード
+
+> **位置づけ**: docs/21 (Research OS 構想, 2026-07-12) の Phase RS1〜RS4 を実装粒度に
+> 展開したもの。設計判断は本節が正 (docs/21 §6-7 は方向性のみ)。
+> 実装順は **S-100 → S-101 → S-102** が全後続の前提。S-110 (契約テスト) は独立で随時可。
+> Phase R2 (V1.5) の未着手カード (S-08〜S-22) より本節を優先する — 律速は
+> アダプタ本数ではなく「1試行あたりコスト」であることが本番実測で確定したため (docs/21 §0)。
+
+### S-100: features parquet に forward return 列を追加 (RS1)
+
+- **WHY**: Explorer (Signal Lab) も Discovery Engine も「feature値と*その後の*リターンの
+  関係」を見る道具なのに、features parquet には feature 列しか無く forward return が
+  存在しない。これが docs/21 §3 の「Explorer は研究に使えない」の根本原因であり、
+  S-101 (IC)・S-106/107 (Signal Lab)・S-108 (Discovery) 全ての前提工事
+- **設計判断 (確定)**:
+  1. **計算は `eval/backtest.py` の `forward_returns_series()` を再利用する** (新実装禁止)。
+     これが EEP 本体と同一の規約 — bar t で signal → t+`entry_delay_bars` の open で entry →
+     その `horizon_bars` 後の close で exit — を持つ唯一の実装であり、Signal Lab / Discovery の
+     数字と screen/full の数字が「同じ定義のリターン」で照合可能になる
+  2. 規約: `entry_delay_bars=1` (docs/00 §3 原則2: 同バー約定禁止)、`direction="long"`、
+     **コスト控除なし (gross)**、単位 bps。short や net はビュー側で符号反転/控除すればよい
+  3. horizon は `{"1h": 1, "4h": 4, "24h": 24, "72h": 72, "168h": 168}` (1h グリッドの bar 数)。
+     列名 `fwd_ret_1h` … `fwd_ret_168h`
+  4. **feature_defs には登録しない / registry.py の FEATURES にも入れない**。これは
+     feature ではなく教師ラベル (未来を含む)。signal_spec が `fwd_ret_*` を参照した場合、
+     未登録ゆえ Readiness が「未定義feature」と判定し、評価器も fail-closed で落ちる —
+     この既存挙動そのものが lookahead spec への正しい防波堤なので、例外処理を足さないこと
+  5. 後方互換: parquet は features_sync が毎回全量上書きするため migration 不要。
+     デプロイ後に lake-sync.yml を workflow_dispatch で1回手動実行して列を反映する
+- **WHAT**: `research/src/cryptoedge_research/features/labels.py` 新設
+  (`FORWARD_HORIZONS: dict[str, int]` + `compute_forward_labels(candles) -> pd.DataFrame`)。
+  `jobs/features_sync.py` の `sync_features_for_instrument()` で `compute_features()` の結果に
+  label 列を concat して同一 parquet に書く
+- **受入条件**:
+  (a) 整合 golden: 合成 candles + 任意の fires に対し `fwd_ret_{h}[t]` ==
+  `run_backtest(...)` が bar t の signal に対して返す `Trade.ret_bps` (コスト0設定) と一致。
+  (b) lookahead 検査: bar t+1+h の close を摂動すると `fwd_ret_{h}[t]` が変わり、
+  `fwd_ret_{h}[t-1]` 以前は変わらないことを assert (実装を1バーずらすと落ちるテスト)。
+  (c) NaN tail: 末尾 h+1 行が NaN。
+  (d) 本番: lake-sync 手動実行後、Explorer の SQL タブで
+  `SELECT ts, ret_24h, fwd_ret_24h FROM ...` が引けること
+- **関連docs**: docs/21 §6, docs/04 §3, docs/05 §3.2 (リターン規約)
+
+### S-101: Feature Catalog — description + feature_stats (IC) + カタログAPI/UI (RS1)
+
+- **WHY**: feature 語彙16本が UI のどこにも表示されず、「何が書けるか」を知るのに Python
+  ソースを読むしかない (docs/21 P-2)。また S-97/98 同様、docs/06 に設計だけあるカタログ画面が
+  未実装。IC (feature×horizon の予測力) はカタログの並び順に使う最重要メタデータ
+- **設計判断 (確定)**:
+  1. **IC は features_sync.py 内で計算する** (専用 nightly を新設しない)。sync 時点で
+     features + fwd_ret の DataFrame が既にメモリ上にあり、Spearman 相関の追加コストは
+     数秒。計算場所の選択肢 (api Worker / 新規ジョブ / ブラウザ) はすべて却下 —
+     Worker は R2 の parquet を pandas 相当で読めず、新規ジョブは同じ読み込みを二度やる
+  2. 保存先は新テーブル `feature_stats` (migration 0009):
+     `(feature_id TEXT, horizon TEXT, instrument_id TEXT, spearman_ic REAL,
+     q5_q1_spread_bps REAL, n INTEGER, computed_at INTEGER,
+     PRIMARY KEY (feature_id, horizon, instrument_id))`。書き込みは
+     `POST /internal/feature-stats` (INSERT OR REPLACE、research token 認証は既存踏襲)
+  3. 指標定義: `spearman_ic` = feature[t] と fwd_ret_{h}[t] の Spearman 相関
+     (両方 non-NaN の行のみ)。`q5_q1_spread_bps` = feature 値で `pd.qcut(5)` した
+     最上位分位の平均 fwd_ret − 最下位分位の平均 fwd_ret。n < 500 の組は書き込まない
+  4. `readiness.ts` の `DERIV_FEATURE_BASE_TABLE` と `loadSharedContext` 相当の
+     データ充足判定をカタログAPIと**共有** (export して再利用。コピー禁止 —
+     このハードコード表の二重化は readiness.ts 冒頭コメントが警告済みの負債)
+- **WHAT**:
+  (1) `features/registry.py`: `FeatureDef` に `description: str` (日本語1行) を追加、16本全てに記述
+  (例: `ret_24h`「過去24時間の close 変化率」、`funding_z_30d`「funding rate の30日Zスコア」)。
+  `features_sync.py` が `/internal/feature-defs` へ送る `spec` dict に `description` を含める。
+  (2) IC 計算 + `internal_client.py` に `FeatureStatInput`/`submit_feature_stats()`。
+  (3) api: `GET /api/v1/features/catalog` — feature_defs × feature_stats × データ充足 join。
+  応答: `{features: [{feature_id, name, family, description, cadence, lookback_required,
+  data_status: "ok"|"data_pending", stats: [{horizon, spearman_ic, q5_q1_spread_bps, n}]}]}`。
+  (4) web: `/features` ルート + FeaturesScreen (テーブル、family フィルタ、DATA待ちバッジ、
+  IC は符号で色分け、行アンカー `#<feature_id>` — S-105 が使う)。ナビに追加
+- **受入条件**: 本番カタログに price 9 + deriv 7 が説明付きで並ぶ。deriv の data_status が
+  実データ有無を反映。S-100 反映後の sync 1回で feature_stats が
+  16 feature × 5 horizon (n≥500 の組) 埋まり、UI に表示される
+- **関連docs**: docs/21 §5-③, docs/06 (カタログ画面), docs/04 §3.1
+
+### S-102: Spec Builder GUI — BoolExpr ツリーエディタ (RS1)
+
+- **WHY**: SignalSpec 手書き JSON が spec 供給 0.8件/日の律速 (docs/21 §0)。DSL は
+  7ノードしかない今が GUI 化の適期で、以後の文法拡張 (S-17 dom_in 等) はエディタに
+  1ノード足すだけになる
+- **設計判断 (確定)**:
+  1. **状態管理: SignalSpec JSON オブジェクトそのものを単一の真実とする** controlled
+     component (`value`/`onChange`)。ツリー用の別状態表現 (ノードID表・正規化ストア等) を
+     **作らない** — 再帰の各段が「子の onChange = 親を immutable に組み直す closure」を
+     渡すだけで完結し、JSON との round-trip が構造的に保証される (変換層が無いため)
+  2. 構成: `apps/web/src/components/spec-builder/` に
+     `SpecBuilder.tsx` (spec 全体: when ツリー + entry.delay_bars + exit (horizon /
+     cond+max_horizon 切替) + direction)、`BoolExprEditor.tsx` (再帰ノード、種別 switch)、
+     `nodes.ts` (純関数: 種別判定 / デフォルトノード生成 / 種別変換)。
+     種別変換は and↔or (子保持)、その他は `{cmp: [{feature: <カタログ先頭>}, ">", 0]}` へ初期化
+  3. ノード別フォーム: cmp = feature セレクタ (S-101 カタログ、DATA待ちはバッジ付きで選択可) +
+     lag (任意) + 比較子 + 右辺 (数値 | featureRef トグル)。event = type + min_magnitude。
+     regime = trend/vol/liquidity の複数選択。time = utc_hour_in / dow_in
+     (**dow は Sun=0..Sat=6** — dsl.ts / evaluator.py の規約)。and/or = 子リスト +
+     [+条件] ボタン。not = 子1つ
+  4. 右ペイン (常時表示): JSON プレビュー + `signalSpecSchema.safeParse` エラー +
+     依存チップ (`referencedFeatures`/`referencedEventTypes`/`usesRegime` — schema から
+     import、再実装禁止) + カタログ照合による READY 予測 (未定義 feature は赤チップ)
+  5. `CreateVersionForm` は [ビルダー | JSON] タブ化。JSON テキストエリアは残し、
+     JSON→ビルダー切替時に parse 失敗ならタブ遷移をブロックしてエラー表示。
+     safeParse 失敗中は送信ボタン無効
+- **受入条件**: (a) 本番の既存 spec 全件 (fixture 化して repo に置く) をビルダーで開き、
+  無編集で serialize した結果が deep-equal。(b) `nodes.ts` の単体テスト
+  (種別判定7種 / 変換で and↔or の子が保持される)。(c) Playwright で
+  「`ret_24h < -3` AND `time.utc_hour_in [0,1]`」を GUI だけで組み、生成 JSON が期待値と
+  一致。(d) 無効 spec は送信不可
+- **関連docs**: docs/21 §6 (SignalSpec), docs/05 §9, packages/schema/src/domain/dsl.ts
+
+### S-103: literature_import Pack v2 + 取込エンドポイント + Import Studio (RS2)
+
+- **WHY**: 現行の literature_import は「AIに語彙を渡さず JSON を書かせるフォーム」で、
+  AI が valid な spec を書けない (docs/21 §3)。①②の実現本体
+- **設計判断 (確定)**:
+  1. Pack template は**動的生成** `GET /api/v1/packs/literature-import/template`:
+     S-101 カタログ (説明・データ充足込み) + DSL 文法解説 (静的定数、7ノードの例つき) +
+     カテゴリ enum + 返信 JSON スキーマ + GUARDRAILS (「存在しない feature を参照するなら
+     spec_drafts でなく feature_requests に入れよ」) を Markdown で組み立てる
+  2. 返信スキーマ `literatureImportV2Schema` (packages/schema/src/api/):
+     `{edge: <既存 createEdge と同フィールド>, spec_drafts: [{label: string,
+     signal_spec: signalSpecSchema, rationale: string}] (max 5),
+     feature_requests: [{name, description, why}]}`
+  3. `POST /api/v1/import/literature`: envelope を zod 検証 → edge 作成 (status=IDEA) +
+     valid な draft ごとに edge_versions 作成 (semver 0.1.0, 0.2.0, …、is_current は
+     最初の valid 案)。**不正な draft はその案だけ拒否し全体をロールバックしない**
+     (応答に per-draft の ok/errors を返す — AI 出力の部分的成功を許す設計判断)。
+     feature_requests は v1 では**永続化しない** (応答にエコーし UI 表示のみ。
+     テーブル化は Discovery 側の feature 需要集計と合流させる将来課題として明記)
+  4. 応答に per-draft の readiness (services/readiness.ts を呼ぶ) を含める
+- **WHAT**: 上記 + web 新ルート `/import` (ImportStudioScreen):
+  [Pack v2 をコピー] → 貼り戻し textarea → 案ごとの結果カード
+  (READY/FEATURE待ち/DATA待ちバッジ + [この案を screen] ボタン)
+- **受入条件**: サンプル返信 JSON (テストfixture) 1回貼りで Edge 1 + version 3 が入り、
+  各案の readiness が返る。draft 2/3 が不正なケースで valid 分のみ登録され、
+  エラーが案単位で表示される
+- **関連docs**: docs/21 §5-①②, docs/07 §2 (双方向スキーマ), docs/08
+
+### S-104: edge_dossier / improvement Pack (RS2)
+
+- **WHY**: REJECT が行き止まり (docs/21 P-4)。verdict.py の構造化 reasons を
+  「次の一手」の AI 相談材料に変換するループの開通
+- **設計判断 (確定)**: daily_briefing (research-worker が生成し R2+ai_outputs に保存) と
+  違い、この2種は **api Worker がリクエスト時に D1 から決定論生成** し、保存しない
+  (`GET /api/v1/packs/edge/:id/dossier` / `.../improvement`)。理由: 内容が Edge の
+  現在状態の純関数で、鮮度が命 (保存すると stale 問題が生まれる)。ai_outputs には書かない
+- **WHAT**: docs/07 の ROLE/CONTEXT/DATA/QUESTIONS/GUARDRAILS 構成で Markdown 生成。
+  dossier = thesis + 現 spec + 最新 full run 全 metrics + verdict reasons + 遷移履歴。
+  improvement = dossier 内容 + n_trials (残り試行予算の目安として soft budget 文言) +
+  変更候補メニュー (cmp 閾値の近傍、horizon 代替 = S-100 の5種、direction 反転、
+  regime/time 条件の追加) を QUESTIONS としてAIに提示。
+  UI: EdgeDetail に [Copy for AI: Dossier] 常設、最新 full verdict が REJECT/WATCH のとき
+  [Copy for AI: 改善相談] を追加。Action Queue の review アイテムにも後者を出す
+- **受入条件**: REJECT 済み「月曜アジア開場効果」で improvement Pack が生成され、
+  reasons 全件と試行予算文言が GUARDRAILS に含まれる
+- **関連docs**: docs/21 §5-④, docs/07 §2, research/.../eval/verdict.py
+
+### S-105: Readiness Advisor — 不足チップのリンク化 (RS2)
+
+- **WHY**: Readiness が診断名を言うが処方箋を出さない (docs/21 §3、S-95 のユーザー混乱の
+  一般化)
+- **WHAT**: `labels.ts` のチップ文字列生成をコンポーネント化し、種別ごとに遷移先を付ける:
+  未定義/DATA待ち Feature → `/features#<feature_id>` (S-101 のアンカー)、
+  イベント/データ待ち → `/data-health` (該当ストリームへアンカー)、
+  SignalSpec 無し → EdgeDetail のビルダータブ (S-102) へスクロール + `/import` への導線。
+  バックフィル workflow_dispatch の起動ボタンは **S-14 完了までスコープ外**
+  (Worker が GitHub token を持たない — 権限設計は S-14 側で行う) と明記
+- **受入条件**: DATA_PENDING の Edge から2クリック以内でカタログ該当行 / Data Health
+  該当ストリームに着地する
+- **関連docs**: docs/21 §5-④, docs/06 §7
+
+### S-106: Signal Lab タブ1 — Feature ランキング (RS3)
+
+- **WHY**: docs/21 §6 Explorer 再設計の第1弾。SQL を書かずに「どの feature に予測力が
+  あるか」を一覧できる画面
+- **設計判断 (確定)**: 計算は全て DuckDB-WASM (既存 duckdb-lake.ts 経由で features parquet を
+  読む)。Spearman IC は SQL で rank() → corr() の2段。SQL 文字列の組み立ては
+  `apps/web/src/lib/lab-sql.ts` の純関数に切り出し snapshot テスト。
+  **数値の golden はユニットテストでは持たない** (vitest 内で DuckDB-WASM を起動する
+  コストが見合わない) — 代わりに受入時に S-101 の feature_stats (Python計算) と
+  同一 feature×horizon で突合し ±1e-3 で一致することを実行ログに記録する
+- **WHAT**: ExplorerScreen を3タブ化 ([ランキング | ワークベンチ | SQL]、SQL は現行機能を
+  無変更で移設)。タブ1: feature×horizon 表 (Spearman IC / Q5−Q1 / n)、年別 IC の
+  ミニ表示、feature 行クリックで S-101 カタログへ。ガードレールバナー
+  (「この探索は非公式。正式な検定は screen で行われ、試行台帳に記録されます」+
+  現在の n_trials — docs/04 の思想の UI 化) を Signal Lab 全タブ共通で表示
+- **受入条件**: 16 feature × 5 horizon の表が実 parquet から描画され、feature_stats との
+  突合が ±1e-3。SQL タブが従来どおり動く (回帰なし)
+- **関連docs**: docs/21 §6, docs/04 §2 (試行の公式/非公式の区別)
+
+### S-107: Signal Lab タブ2 — 条件ワークベンチ + SignalSpec 昇格 (RS3)
+
+- **WHY**: 「安い探索を先に、重い形式化を後に」(docs/21 F-1) を実現する中核。
+  条件の表現を SQL でなく BoolExpr にすることで [SignalSpecへ昇格] が1クリックになる
+- **設計判断 (確定)**:
+  1. 条件エディタは S-102 の `BoolExprEditor` を `allowedKinds` prop 付きで再利用
+     (新規エディタ禁止)。v1 で許可: cmp/and/or/not/time。event/regime は parquet に
+     列が無いため無効化 (ツールチップで理由表示)
+  2. `apps/web/src/lib/boolexpr-sql.ts` 新設: `boolExprToSql(expr): string`。
+     cmp の lag は `LAG(<feature>, <lag>) OVER (ORDER BY ts)`、time は
+     DuckDB の `date_part` — **dow は Sun=0..Sat=6 に合わせる** (DuckDB `dayofweek` も
+     Sun=0 だが、`packages/schema/fixtures/dsl-golden.json` の time ケースを
+     そのままテストベクタに使い evaluator との一致を保証すること)。
+     未対応ノードは throw (UI 側で事前に無効化済み)
+  3. 昇格動線: [SignalSpecへ昇格] → Edge 選択 (既存 Edge or 新規) → EdgeDetail の
+     CreateVersionForm へ BoolExpr を prefill (router の navigation state 経由)
+- **WHAT**: タブ2 UI: 条件エディタ + horizon 選択 → 条件成立時の fwd_ret 分布 vs 無条件
+  (平均/中央値/hit rate/n)、年別テーブル。昇格ボタン
+- **受入条件**: `boolexpr-sql.test.ts` が dsl-golden.json の cmp/time/and/or/not ケースを
+  網羅 (SQL 実行はせず期待 SQL 文字列 + 手計算の成立行で検証)。
+  「ret_24h < -3」条件で分布比較が表示され、昇格で CreateVersionForm に正確な JSON が載る
+- **関連docs**: docs/21 §6, docs/05 §9, docs/11 §4 (golden vector 義務)
+
+### S-108: Discovery Engine Stage 1 — 条件付きリターン走査 + BH-FDR (RS4)
+
+- **WHY**: docs/04 §5 Stage 1 の実装。`discovery_findings` テーブルと `/internal/findings`
+  だけ存在し書き込むジョブが無い (docs/21 §1.3)。⑥の中核
+- **設計判断 (確定)**:
+  1. 走査空間 (v1 固定): 16 feature × 4 閾値 (当該 feature の p10/p25/p75/p90 分位点;
+     p75/p90 は `>`、p10/p25 は `<`) × 5 horizon (S-100 の FORWARD_HORIZONS)
+     = **最大 320 検定/銘柄**。n<100 の組はスキップ
+  2. 統計: 条件成立バーの fwd_ret 平均に対する **Newey-West t 検定**
+     (Bartlett カーネル、ラグ = horizon_bars — 重複リターンの自己相関補正)。
+     p 値は正規近似両側。バッチ全体 (スキップ除く全検定) に **Benjamini-Hochberg FDR** を
+     適用し q 値を付与。**q < 0.10 のみ findings として送信**
+  3. finding の形: `kind='conditional_return'`、`spec` = BoolExpr JSON
+     `{"cmp": [{"feature": <name>}, <op>, <閾値実数>]}` (signalSpecSchema の when として
+     そのまま parse 可能であること)、`stats` = `{n, ev_bps, t_nw, p_value, quantile,
+     horizon, direction, batch_tests}` (batch_tests = 実施検定総数 — 透明性のため)。
+     novelty は v1 では null (既存 Edge との類似判定は Stage 3 以降)
+  4. **findings は公式試行ではない** — n_trials 台帳は増やさない (docs/04 の
+     公式/非公式の区別)。公式カウントは S-109 で昇格した Edge の screen 時に発生する
+  5. 実装構成: 統計は `research/.../discovery/scan.py` の純関数群
+     (`newey_west_tstat()`, `bh_fdr()`, `scan_instrument(df) -> list[Finding]`)、
+     I/O は `jobs/discovery.py`。workflow は `.github/workflows/discovery.yml`
+     (weekly cron + workflow_dispatch — events-backfill.yml の1ジョブ1ワークフロー方式)
+- **受入条件**: (a) `bh_fdr()` golden: 事前計算した p 値列→q 値列 fixture
+  (statsmodels で offline 生成しコミット) と一致。(b) `newey_west_tstat()` golden:
+  小配列で手計算値と一致。(c) 合成データ E2E: 植え込み効果 (feature>p90 で +50bps ドリフト)
+  が q<0.10 で検出され、無関係 feature は検出されない。(d) 本番初回実行で findings が
+  0件超、全 spec が `signalSpecSchema` の when として parse 可能
+- **関連docs**: docs/04 §4-5, docs/21 §5-⑥, migrations/0001 (discovery_findings)
+
+### S-109: Findings Inbox + finding_review Pack + IDEA 昇格 (RS4)
+
+- **WHY**: S-108 の findings を人間+AI のレビューに載せ、経済的接地があるものだけを
+  Edge 化する出口 (docs/04 §6 の思想: 統計的異常 ≠ エッジ)
+- **設計判断 (確定)**:
+  1. API: `GET /api/v1/findings?status=new` (fdr_q 昇順)、
+     `POST /api/v1/findings/:id/promote`、`POST /api/v1/findings/:id/dismiss`。
+     promote = edges 作成 (status=IDEA、タイトル自動生成「<feature> <op> <閾値> →
+     <horizon>」、thesis に stats 要約) + edge_versions 作成 (when=finding.spec、
+     exit.horizon=stats.horizon、direction = ev_bps の符号で long/short、is_current=1) +
+     finding を status='promoted'/promoted_edge_id 更新。**昇格直後の readiness は
+     必然的に READY** (語彙内 feature の cmp のみで構成されるため) — これが受入の要
+  2. `finding_review` Pack: S-104 と同じ on-demand 方式
+     `GET /api/v1/packs/findings/review` — status=new 上位10件に対し経済的接地の質問
+     (「この条件が利益になる*理由*を4源泉 (行動/構造/情報/リスクプレミア) のどれかで
+     説明できるか。できなければ dismiss を推奨せよ」) を同梱
+  3. UI: Signal Lab に第4タブ [Findings] (docs/06 SCR-04 の実装位置)。
+     表 = 条件 (人間可読レンダリング) / ev_bps / q / n / horizon + [昇格][却下] +
+     [Copy for AI: review]
+- **受入条件**: 昇格した Edge の readiness が READY で、そのまま screen が実行できる。
+  dismiss が status を更新し一覧から消える。review Pack に4源泉の質問文が含まれる
+- **関連docs**: docs/04 §6, docs/21 §5-⑥, docs/07 §2
+
+### S-110: eval_metrics の metric/segment 名 契約テスト (随時、RS1 相当)
+
+- **WHY**: S-94/S-96 の根本原因 — Python (書き込み) と TS (読み取り) の間に
+  metric/segment 名の契約テストが無い。DSL には golden vector があるのに
+  eval_metrics には無い非対称の解消 (docs/21 §1.2)
+- **WHAT**: `packages/schema/fixtures/eval-metrics-contract.json` 新設 —
+  ライフサイクルゲートが読む (segment, metric) ペアの正典リスト
+  (`overall/ev_bps`, `wf:oos/p_perm`, `wf:oos/sharpe_bootstrap` 等)。
+  (1) TS 側: `edge-lifecycle.ts` の SQL が参照するペアを定数化し、fixture と一致することを
+  テスト。(2) Python 側: `run_eep()` の出力 metrics が fixture の全ペアを実際に含むことを
+  test_pipeline に追加 (dsl-golden.json と同じ相対パス読み込み方式)
+- **受入条件**: fixture からペアを1つ消す/変えると TS・Python 両方のテストが落ちる
+- **関連docs**: docs/11 §4, docs/19 S-94/S-96 実行ログ
+
 ## S-90: docs 小修正バッチ (随時)
 
 - **WHAT**: docs/17 §4 の「小修正」判定分 — docs/02 列追記 / docs/06 実装済み注記 /
