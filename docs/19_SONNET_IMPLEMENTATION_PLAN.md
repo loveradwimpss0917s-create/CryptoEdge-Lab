@@ -133,6 +133,28 @@
 - **関連docs**: docs/06 §7.2
 - **実行ログ (2026-07-11, Sonnet)**: 実装完了・デプロイ待ち
 
+### S-96: PAPER→ACTIVE ゲートもS-94と同一原因で通過不能だった (予防修正)
+
+- **WHY**: S-94 (CANDIDATE→TESTING) 修正後、同一バグクラス (ガードが期待するCI付きの
+  metric行が実際には別のmetric名で書かれている) が他のゲートにも潜んでいないか
+  横展開で監査。`apps/api/src/services/edge-lifecycle.ts` の `paperPerformance()` を確認
+- **原因**: `eval/pipeline.py` の `_bundle_rows()` が `segment='wf:oos'` に書き込む
+  素の `sharpe` 行は `ci_lo`/`ci_hi` を一切持たない (point estimateのみ)。CI付きの
+  Sharpeは別の `bootstrap_ci()` 呼び出しが書く `sharpe_bootstrap` という別名の行にしかない。
+  `paperPerformance()` は `metric = 'sharpe'` を問い合わせて `ci_lo`/`ci_hi` を期待していたため、
+  常に `null` を受け取り `if (... || ci_lo === null || ci_hi === null) return null` で
+  必ず `null` を返す → `ctx.PAPER_to_ACTIVE` が設定されず `guardPaperToActive` は
+  常に "missing guard context" で失敗する構造だった。本番にまだPAPER到達Edgeが
+  無いため実害は未発生 — S-94と同じ実装ミスが実際に踏まれる前に発見・修正できた
+- **WHAT**: クエリの `metric = 'sharpe'` を `metric = 'sharpe_bootstrap'` に修正
+- **DONE/受入条件**: `edge-lifecycle.test.ts` に新規describeブロック追加
+  (CI無し`sharpe`行だけではガードを満たさないことを示す回帰テスト1件 +
+  正しい`sharpe_bootstrap`行でガードが実際に通ることを示すテスト1件)。
+  PAPER→ACTIVEパスはこれ以前テストが1件も無かった
+- **関連docs**: docs/05 §2, docs/19 S-94
+- **実行ログ (2026-07-11, Sonnet)**: 実装完了、`edge-lifecycle.test.ts` 7件green
+  (新規2件含む)。typecheck/lint/test 全緑 (api 90件)。デプロイ待ち
+
 ### S-03: イベント履歴バックフィル (最重要)
 
 - **WHY**: events が前方収集のみのため、イベント系Edge全てが歴史サンプルゼロで評価不能

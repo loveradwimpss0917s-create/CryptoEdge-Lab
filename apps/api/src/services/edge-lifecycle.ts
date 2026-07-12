@@ -116,10 +116,18 @@ async function paperPerformance(env: Env, edgeId: string): Promise<GuardContext[
   const costModel = JSON.parse(version.cost_model) as { taker_bps: number; slippage_bps: number };
   const expectedCostBps = (costModel.taker_bps + costModel.slippage_bps) * 2;
 
+  // `metric = 'sharpe'` under wf:oos is the plain point estimate (from
+  // eval/pipeline.py's `_bundle_rows`) and never carries a CI -- only
+  // `sharpe_bootstrap` (from the separate bootstrap_ci() call a few lines
+  // later in run_eep()) has ci_lo/ci_hi populated. Same bug class as the
+  // CANDIDATE->TESTING gate (S-94): querying a metric name that never has
+  // the field this guard actually needs, so `ci_lo === null` was always
+  // true and PAPER->ACTIVE could never pass regardless of real paper
+  // performance. Caught before any edge reached PAPER in production.
   const oosSharpe = await env.DB.prepare(
     `SELECT em.ci_lo, em.ci_hi FROM eval_metrics em
      JOIN eval_runs r ON r.run_id = em.run_id
-     WHERE r.edge_version_id = ?1 AND r.run_kind = 'full' AND em.segment = 'wf:oos' AND em.metric = 'sharpe'
+     WHERE r.edge_version_id = ?1 AND r.run_kind = 'full' AND em.segment = 'wf:oos' AND em.metric = 'sharpe_bootstrap'
      ORDER BY r.finished_at DESC LIMIT 1`
   )
     .bind(version.version_id)

@@ -191,3 +191,72 @@ describe("attemptTransition CANDIDATE -> TESTING (docs/05 §2 screen-run guard)"
     expect(outcome.ok).toBe(false);
   });
 });
+
+describe("attemptTransition PAPER -> ACTIVE (docs/05 §2 paper-performance guard)", () => {
+  // No edge has reached PAPER in production yet, so this path had zero
+  // test coverage before -- caught proactively while auditing the same bug
+  // class as S-94 (CANDIDATE->TESTING): eval/pipeline.py's `_bundle_rows`
+  // writes a plain "sharpe" MetricRow under wf:oos with no CI at all (only
+  // "sharpe_bootstrap", from the separate bootstrap_ci() call, carries
+  // ci_lo/ci_hi). paperPerformance() queried `metric='sharpe'` expecting a
+  // CI, which is always null there -- so `ctx.PAPER_to_ACTIVE` could never
+  // be populated and this guard would have failed unconditionally the
+  // moment a real edge reached PAPER, identical in shape to S-94.
+  async function seedPaperEdge(args: { oosSharpeMetric: string; ciLo: number; ciHi: number }) {
+    const edge = await seedEdge({ status: "PAPER" });
+    await env.DB.prepare(
+      `INSERT INTO edge_versions (version_id, edge_id, semver, signal_spec, params, instrument_id, direction, horizon, cost_model, created_at, is_current)
+       VALUES ('v1', ?1, '1.0.0', '{}', '{}', 'BTCUSDT.BINANCE.PERP', 'long', '24h', '{"taker_bps":4,"slippage_bps":2}', ?2, 1)`
+    )
+      .bind(edge.edge_id, Date.now())
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO eval_runs (run_id, edge_version_id, protocol_version, run_kind, dataset_hash, snapshot_id, seed, config, status, finished_at, requested_by, git_sha)
+       VALUES ('r1', 'v1', '1.0', 'full', 'hash', 'snap', 1, '{}', 'done', ?1, 'user:test', 'abc123')`
+    )
+      .bind(Date.now())
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO eval_metrics (run_id, segment, metric, value, ci_lo, ci_hi) VALUES ('r1', 'wf:oos', ?1, 1.2, ?2, ?3)`
+    )
+      .bind(args.oosSharpeMetric, args.ciLo, args.ciHi)
+      .run();
+
+    const now = Date.now();
+    const start = now - 35 * 86_400_000;
+    const netReturns = [10, 12, 8, 11, 9, 10, 13, 7, 12, 10];
+    const stmt = env.DB.prepare(
+      `INSERT INTO paper_signals (signal_id, edge_version_id, status, direction, ts_signal, ret_bps, ret_net_bps, trigger_snapshot)
+       VALUES (?1, 'v1', 'closed', 'long', ?2, ?3, ?4, '{}')`
+    );
+    await env.DB.batch(
+      netReturns.map((netBps, i) => stmt.bind(`sig-${i}`, start + i * 3 * 86_400_000, netBps + 3, netBps))
+    );
+    return edge;
+  }
+
+  it("regression: a CI-less 'sharpe' row under wf:oos must not satisfy the guard", async () => {
+    // Mirrors what pipeline.py actually writes: ci_lo/ci_hi both null.
+    const edge = await seedPaperEdge({ oosSharpeMetric: "sharpe", ciLo: null as unknown as number, ciHi: null as unknown as number });
+    const outcome = await attemptTransition(
+      env,
+      { edge_id: edge.edge_id, status: "PAPER", hypothesis: "h", rationale: "r", counter_evidence: "c" },
+      "ACTIVE",
+      "user:test",
+      "go"
+    );
+    expect(outcome.ok).toBe(false);
+  });
+
+  it("accepts PAPER -> ACTIVE when paper performance clears the OOS sharpe_bootstrap CI lower bound", async () => {
+    const edge = await seedPaperEdge({ oosSharpeMetric: "sharpe_bootstrap", ciLo: 0.05, ciHi: 0.5 });
+    const outcome = await attemptTransition(
+      env,
+      { edge_id: edge.edge_id, status: "PAPER", hypothesis: "h", rationale: "r", counter_evidence: "c" },
+      "ACTIVE",
+      "user:test",
+      "go"
+    );
+    expect(outcome.ok).toBe(true);
+  });
+});
