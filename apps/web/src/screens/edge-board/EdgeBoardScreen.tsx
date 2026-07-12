@@ -9,7 +9,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { createEdgeRequestSchema, EDGE_STATUSES, READINESS_STATES, type ReadinessState } from "@cryptoedge/schema";
 import { api, type EdgeSummary } from "../../api/client";
-import { nextActionLabel, READINESS_STATE_BADGE_CLASS, READINESS_STATE_LABEL, STATUS_LABEL } from "../../lib/labels";
+import {
+  nextActionLabel,
+  READINESS_STATE_BADGE_CLASS,
+  READINESS_STATE_LABEL,
+  STATUS_LABEL,
+  VERDICT_BADGE_CLASS,
+  VERDICT_LABEL
+} from "../../lib/labels";
 
 // AIからの貼り戻し (docs/07 §2 双方向スキーマ, docs/15 SONNET-2 V1 slice):
 // literature_import Pack が指示する JSON 形式は既存の createEdgeRequestSchema
@@ -127,6 +134,22 @@ function ReadinessChip({ edge }: { edge: EdgeSummary }) {
   );
 }
 
+// docs/06 §3 SCR-02 wireframe: "カード: title / readiness チップ / score /
+// verdict / 試行数 / スパーク" -- score/verdict/trial_count were entirely
+// absent before this (2026-07 UX audit), forcing a click into every single
+// Edge just to learn whether its last run passed or failed. Sparkline
+// (paper equity) is out of scope here -- same reason Portfolio Pulse is
+// unimplemented (docs/06 §3 SCR-01 note: too few paper_signals yet).
+function VerdictBadge({ edge }: { edge: EdgeSummary }) {
+  if (!edge.latest_verdict) return null;
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${VERDICT_BADGE_CLASS[edge.latest_verdict]}`}>
+      {VERDICT_LABEL[edge.latest_verdict]}
+      {edge.latest_score !== null ? ` ${edge.latest_score}` : ""}
+    </span>
+  );
+}
+
 function EdgeCard({ edge }: { edge: EdgeSummary }) {
   return (
     <Link
@@ -136,11 +159,17 @@ function EdgeCard({ edge }: { edge: EdgeSummary }) {
     >
       <div className="flex items-start justify-between gap-2">
         <div className="font-medium">{edge.title}</div>
-        <ReadinessChip edge={edge} />
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <ReadinessChip edge={edge} />
+          <VerdictBadge edge={edge} />
+        </div>
       </div>
       <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
         <span>{edge.category}</span>
         {edge.pdf_ref && <span className="rounded bg-slate-800 px-1">{edge.pdf_ref}</span>}
+        <span className="ml-auto font-mono" title="試行数 (screen+full run 数)">
+          試行:{edge.trial_count}
+        </span>
       </div>
     </Link>
   );

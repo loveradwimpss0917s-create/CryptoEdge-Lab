@@ -31,6 +31,45 @@ async function seedEdgeWithVersion(env: Env) {
   ).run();
 }
 
+describe("GET /edges list (docs/06 §3 Board card enrichment, 2026-07 UX audit)", () => {
+  it("includes latest_verdict/latest_score/trial_count so Board cards don't need a per-edge follow-up request", async () => {
+    await seedEdgeWithVersion(env);
+    await env.DB.prepare(
+      `INSERT INTO eval_runs (run_id, edge_version_id, protocol_version, run_kind, dataset_hash, snapshot_id, seed, config, status, finished_at, requested_by, git_sha)
+       VALUES ('r1', 'v1', '1.0', 'screen', 'hash', 'snap', 1, '{}', 'done', 100, 'user:test', 'abc123'),
+              ('r2', 'v1', '1.0', 'full', 'hash', 'snap', 1, '{}', 'done', 200, 'user:test', 'abc123')`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO verdicts (run_id, verdict, score, reasons, thresholds_version, decided_at) VALUES ('r2', 'ADOPT', 88, '[]', 'v1', 200)`
+    ).run();
+
+    const res = await edgesRoute.request("/", {}, env);
+    const body = (await res.json()) as {
+      edges: { edge_id: string; latest_verdict: string | null; latest_score: number | null; trial_count: number }[];
+    };
+    const edge = body.edges.find((e) => e.edge_id === "e1");
+    expect(edge?.latest_verdict).toBe("ADOPT");
+    expect(edge?.latest_score).toBe(88);
+    expect(edge?.trial_count).toBe(2);
+  });
+
+  it("returns null verdict/score and zero trial_count for an edge with no eval_runs yet", async () => {
+    await env.DB.prepare(
+      `INSERT INTO edges (edge_id, slug, title, category, status, hypothesis, rationale, origin, created_at, updated_at)
+       VALUES ('e2', 'slug2', 'Title 2', 'microstructure', 'IDEA', 'h', 'r', 'manual', 1, 1)`
+    ).run();
+
+    const res = await edgesRoute.request("/", {}, env);
+    const body = (await res.json()) as {
+      edges: { edge_id: string; latest_verdict: string | null; latest_score: number | null; trial_count: number }[];
+    };
+    const edge = body.edges.find((e) => e.edge_id === "e2");
+    expect(edge?.latest_verdict).toBeNull();
+    expect(edge?.latest_score).toBeNull();
+    expect(edge?.trial_count).toBe(0);
+  });
+});
+
 describe("GET /edges/:id runs (2026-07 review Task 8)", () => {
   it("returns an empty runs array when the edge has no current version", async () => {
     await env.DB.prepare(

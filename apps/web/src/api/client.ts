@@ -78,6 +78,11 @@ export interface EdgeSummary {
   readiness_class: "A" | "B" | "C" | "D" | null;
   readiness_blockers: string | null;
   readiness: Readiness | null;
+  // docs/06 §3 SCR-02 wireframe: every Board card shows score/verdict/試行数
+  // at a glance (統計的誠実さのUI化 -- docs/06 §1 item 3).
+  latest_verdict: "ADOPT" | "WATCH" | "REJECT" | null;
+  latest_score: number | null;
+  trial_count: number;
 }
 
 export interface ReadinessSummary {

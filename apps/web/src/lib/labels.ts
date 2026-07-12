@@ -31,6 +31,12 @@ export const VERDICT_LABEL: Record<"ADOPT" | "WATCH" | "REJECT", string> = {
   REJECT: "却下"
 };
 
+export const VERDICT_BADGE_CLASS: Record<"ADOPT" | "WATCH" | "REJECT", string> = {
+  ADOPT: "bg-adopt text-slate-950",
+  WATCH: "bg-watch text-slate-950",
+  REJECT: "bg-reject text-slate-950"
+};
+
 // verdict.py の VerdictReason.check 名 (docs/05 §5) と1対1対応。未知の
 // check は id をそのまま表示する (プロトコル改訂で項目が増減し得るため)。
 export const VERDICT_CHECK_LABEL: Record<string, string> = {

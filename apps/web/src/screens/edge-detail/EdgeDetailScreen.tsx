@@ -15,6 +15,7 @@ import {
   READINESS_STATE_BADGE_CLASS,
   READINESS_STATE_LABEL,
   STATUS_LABEL,
+  VERDICT_BADGE_CLASS,
   VERDICT_CHECK_LABEL,
   VERDICT_LABEL
 } from "../../lib/labels";
@@ -48,12 +49,6 @@ function ReadinessPanel({ readiness, runs }: { readiness: Readiness; runs: RunSu
     </section>
   );
 }
-
-const VERDICT_BADGE_CLASS: Record<"ADOPT" | "WATCH" | "REJECT", string> = {
-  ADOPT: "bg-adopt text-slate-950",
-  WATCH: "bg-watch text-slate-950",
-  REJECT: "bg-reject text-slate-950"
-};
 
 function RunHistoryEntry({ run }: { run: RunSummary }) {
   const metricEntries: [string, number | null][] = [

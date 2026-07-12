@@ -155,6 +155,32 @@
 - **実行ログ (2026-07-11, Sonnet)**: 実装完了、`edge-lifecycle.test.ts` 7件green
   (新規2件含む)。typecheck/lint/test 全緑 (api 90件)。デプロイ待ち
 
+### S-97: UIUX監査 — Board カードが設計 (docs/06 §3) を実装していなかった
+
+- **WHY**: ユーザーから「UIUXが使いにくい」と指摘を受け、docs/06 (UI/UX設計) を参照して
+  実装との差分を監査。SCR-02 Edge Board のワイヤーフレーム (docs/06 §3) は
+  「カード: title / readiness チップ / score / verdict / 試行数 / スパーク」と明記しているが、
+  実際の `EdgeCard` (`EdgeBoardScreen.tsx`) は title / readiness チップ / category / pdf_ref
+  のみで、score・verdict・試行数が一切表示されていなかった。docs/06 §1 の中核原則3
+  (「統計的誠実さのUI化: 試行回数カウンタをEdgeカードに常時表示」) が未実装だった —
+  Board を一覧しても各Edgeの状態が全く分からず、1件ずつ開いて確認する必要があった
+  (これが「使いにくい」の実体と判断)
+- **WHAT**: `GET /api/v1/edges` に `latest_verdict`/`latest_score`/`trial_count` を
+  相関サブクエリで追加 (件数がdozens規模のため許容、docs/13 §1)。`EdgeCard` に
+  verdictバッジ (ADOPT/WATCH/REJECT色分け + score) と試行数を追加。
+  `VERDICT_BADGE_CLASS` を `EdgeDetailScreen.tsx` からの重複定義を解消し `labels.ts` に集約
+  (両画面で共有)
+- **DONE/受入条件**: `edges.test.ts` に新規テスト2件 (verdict/score/trial_countが
+  正しく返る場合・評価未実施でnull/0になる場合)。`labels.test.ts` は既存4件のまま。
+  typecheck/lint/test/build 全緑。Tailwindの実コンパイル済みCSSを使い、長いタイトル・
+  各verdict色・試行数0のケースを含む静的HTMLプレビューをPlaywrightでスクリーンショットし、
+  バッジの折り返し・重なりが無いことを目視確認済み (実データでの確認は本番Access認証が
+  このサンドボックスから通らないため不可、レイアウトの目視確認のみ)
+- **関連docs**: docs/06 §1 item 3, §3 SCR-02
+- **実行ログ (2026-07-12, Sonnet)**: 実装完了。api 92件・web 8件 green。デプロイ待ち。
+  スパーク (paper equity) は対象外 (docs/06 §3 SCR-01 の Portfolio Pulse 未実装と同じ理由 —
+  paper_signals の母数がまだ少ない)
+
 ### S-03: イベント履歴バックフィル (最重要)
 
 - **WHY**: events が前方収集のみのため、イベント系Edge全てが歴史サンプルゼロで評価不能

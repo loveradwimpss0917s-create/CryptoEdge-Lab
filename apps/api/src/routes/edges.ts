@@ -42,8 +42,27 @@ edgesRoute.get("/", async (c) => {
     params.push(`%${query.q}%`);
   }
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  const sql = `SELECT edge_id, slug, title, category, status, origin, pdf_ref, created_at, updated_at, readiness_class, readiness_blockers
-               FROM edges ${where} ORDER BY updated_at DESC LIMIT ?${params.length + 1}`;
+  // docs/06 §3 SCR-02 wireframe calls for every Board card to show
+  // score/verdict/試行数 at a glance ("統計的誠実さのUI化: 試行回数カウンタ
+  // をEdgeカードに常時表示") -- previously the list endpoint only returned
+  // lifecycle/readiness fields, so the Board couldn't show any of this
+  // without a per-edge follow-up request, and cards showed nothing more
+  // than title/category (2026-07 UX audit). Correlated subqueries are fine
+  // at this table's size (dozens of edges, docs/13 §1 budget).
+  const sql = `SELECT e.edge_id, e.slug, e.title, e.category, e.status, e.origin, e.pdf_ref, e.created_at, e.updated_at,
+                 e.readiness_class, e.readiness_blockers,
+                 (SELECT v.verdict FROM verdicts v
+                    JOIN eval_runs r ON r.run_id = v.run_id
+                    JOIN edge_versions ev ON ev.version_id = r.edge_version_id
+                    WHERE ev.edge_id = e.edge_id ORDER BY v.decided_at DESC LIMIT 1) AS latest_verdict,
+                 (SELECT v.score FROM verdicts v
+                    JOIN eval_runs r ON r.run_id = v.run_id
+                    JOIN edge_versions ev ON ev.version_id = r.edge_version_id
+                    WHERE ev.edge_id = e.edge_id ORDER BY v.decided_at DESC LIMIT 1) AS latest_score,
+                 (SELECT COUNT(*) FROM eval_runs r
+                    JOIN edge_versions ev ON ev.version_id = r.edge_version_id
+                    WHERE ev.edge_id = e.edge_id AND r.run_kind IN ('screen', 'full')) AS trial_count
+               FROM edges e ${where} ORDER BY e.updated_at DESC LIMIT ?${params.length + 1}`;
   const { results } = await c.env.DB.prepare(sql)
     .bind(...params, query.limit)
     .all<EdgeReadinessInputRow & Record<string, unknown>>();
