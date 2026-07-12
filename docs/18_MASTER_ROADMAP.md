@@ -9,7 +9,10 @@
 
 ---
 
-## 1. 現在地 (2026-07-05 実測)
+## 1. 現在地 (2026-07-05 実測 — **日付固定スナップショット**)
+
+> **2026-07-12 注記**: 本節は更新されず腐るため、ライブの現在地は **docs/HANDOFF.md** を
+> 正典とする (docs/17 ADR-10)。本節は V1 完成時点の記録として凍結。
 
 - docs/09 Phase 0-3: **実装完了**。SONNET-1〜8 + Priority 1-3 (docs/15 §6-8) まで消化
 - 本番: edges 55 / edge_versions 9 / eval_runs 15 (verdict 全REJECT) / paper_signals 0 /

@@ -154,3 +154,24 @@
 | ADR-4 | ロードマップの正典は docs/18、タスクの正典は docs/19。docs/15 は凍結 | 3重管理の解消 (§4) |
 | ADR-5 | kasotubot 連携は pull型 (kasotubotがポーリング) + 冪等イベントIDで開始する | Workers Free に Queues/Durable Objects が無い制約下で最も単純・確実 (docs/20 §4) |
 | ADR-6 | 外部ソースが72時間連続失敗したら降格(頻度減)→retire の二段手順を標準化 | binance/deribitで繰り返したパターンの手順化 (§3.2-5) |
+| ADR-7 | Phase RS (docs/21 研究OS化) を Phase R2 未着手カードより優先する | 本番実測で律速が「アダプタ本数」でなく「1試行あたりコスト」(spec供給 0.8件/日) と確定 (docs/21 §0) |
+| ADR-8 | fwd_ret 列は `eval/backtest.forward_returns_series()` を再利用し、feature_defs には登録しない | EEP と同一のリターン定義を保証 + 未登録による fail-closed が lookahead spec への防波堤になる (docs/19 S-100) |
+| ADR-9 | 派生 Pack (dossier/improvement/finding_review) は保存せず api Worker で on-demand 決定論生成 | 内容が現在状態の純関数であり、保存すると stale 問題が生まれる (docs/19 S-104) |
+| ADR-10 | Fable=CTO/Architect、Sonnet=Engineer の二役体制。セッション状態の正典は docs/HANDOFF.md、運用規約は docs/AI_DEVELOPMENT_GUIDE.md。チャット履歴は情報源として認めない | GitHub を Single Source of Truth とし、別セッション・別アカウント・別AIでも開発を継続可能にする (オーナー指示 2026-07-12) |
+
+---
+
+## 7. 長期運用レビュー追記 (2026-07-12, ガバナンス監査)
+
+docs 全体監査 (00〜21 + README) で発見・処置した事項:
+
+| 発見 | 種別 | 処置 |
+|---|---|---|
+| README「現在の状態」が Phase 0-3 時点のまま。Explorer/Research Pack を未実装と記載 (実装済み) | 矛盾 | README 修正済み (同日) |
+| AIセッションのエントリポイントが無く、読み順が README §読み順 (docs/13 まで) 頼み | 不足 | CLAUDE.md + docs/AI_DEVELOPMENT_GUIDE.md + docs/HANDOFF.md 新設 |
+| docs/21 の重要決定 (Phase RS 優先等) が ADR 台帳に未登録 | 不足 | ADR-7〜10 追加 |
+| docs/18 §1「現在地」が日付固定スナップショットで、更新されず腐る構造 | 運用しづらい | ライブ状態の正典を HANDOFF に移し、docs/18 §1 に注記 |
+| docs/06 SCR-04 (Discovery Lab) と docs/21 Signal Lab 再設計が並存 | 重複 | docs/06 に置換注記 |
+| eval_metrics の metric/segment 名に契約テストが無い (S-94/96 の根本原因) | 負債 | S-110 起票済み (docs/19) |
+| readiness.ts の DERIV_FEATURE_BASE_TABLE が registry.py と手動同期 (単一情報源なし) | 負債 | S-101 で解消予定 (カタログAPIを単一情報源化) |
+| FakeD1 テストダブルが apps/api と workers/ingest に二重実装 | 負債 | 許容 (packages/shared への統合は挙動差が出た時点で実施 — 現状は同一修正を両方に当てる規律で運用) |
