@@ -6,7 +6,7 @@
 // Discovery Engine not yet built).
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ApiError, api, type ActionItem, type QuotaRow, type ReadinessState } from "../../api/client";
 import { formatSnapshotValue, formatUtcTimestamp } from "../../lib/format";
@@ -82,12 +82,38 @@ const ACTION_KIND_BADGE_CLASS: Record<ActionItem["kind"], string> = {
   dq: "bg-reject text-slate-950"
 };
 
-// Action Queue (docs/06 §1 item 1, docs/15 SONNET-7 V1 slice).
+// Action Queue (docs/06 §1 item 1 "ゼロインボックス型", docs/15 SONNET-7 V1
+// slice). docs/06 §3 SCR-01's wireframe shows [承認][却下] buttons directly
+// inside the queue item -- previously every item was just a link to the
+// Edge Dossier, forcing a click-through + a second navigation back even
+// for the one action kind ("approval": ADOPT verdict, still in TESTING)
+// that has a single deterministic action (2026-07 UX audit). "review"
+// items (SCREEN_DONE, or FULL_DONE without ADOPT) have no single correct
+// action -- same in the wireframe, which only shows a summary line for
+// those -- so they stay click-through only.
 function ActionQueuePanel() {
+  const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["action-queue"],
     queryFn: api.actionQueue,
     refetchInterval: 60_000
+  });
+
+  const transition = useMutation({
+    mutationFn: ({ edgeId, toStatus }: { edgeId: string; toStatus: string }) =>
+      api.transitionEdge(edgeId, toStatus, "Action Queueから直接操作"),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["action-queue"] });
+      void queryClient.invalidateQueries({ queryKey: ["edges"] });
+    }
+  });
+
+  const resolveIssue = useMutation({
+    mutationFn: (issueId: number) => api.resolveDqIssue(issueId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["action-queue"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-health"] });
+    }
   });
 
   if (isLoading) return null;
@@ -108,14 +134,58 @@ function ActionQueuePanel() {
               <div className="text-xs text-slate-500">{item.detail}</div>
             </>
           );
+          const edgeId = item.edge_id;
+          const issueId = item.issue_id;
+          const transitionPending = (toStatus: string) =>
+            transition.isPending && transition.variables?.edgeId === edgeId && transition.variables.toStatus === toStatus;
           return (
-            <li key={`${item.kind}-${item.edge_id ?? item.title}-${i}`} className="rounded border border-slate-800 bg-slate-950 p-2">
-              {item.edge_id ? (
-                <Link to="/edges/$edgeId" params={{ edgeId: item.edge_id }} className="block hover:opacity-80">
+            <li
+              key={`${item.kind}-${edgeId ?? issueId ?? item.title}-${i}`}
+              className="space-y-1.5 rounded border border-slate-800 bg-slate-950 p-2"
+            >
+              {edgeId ? (
+                <Link to="/edges/$edgeId" params={{ edgeId }} className="block hover:opacity-80">
                   {label}
                 </Link>
               ) : (
                 <div>{label}</div>
+              )}
+              {item.kind === "approval" && edgeId && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => transition.mutate({ edgeId, toStatus: "VALIDATED" })}
+                    disabled={transition.isPending}
+                    className="rounded bg-adopt px-2 py-1 text-xs font-medium text-slate-950 disabled:opacity-50"
+                  >
+                    {transitionPending("VALIDATED") ? "承認中…" : "承認"}
+                  </button>
+                  <button
+                    onClick={() => transition.mutate({ edgeId, toStatus: "REJECTED" })}
+                    disabled={transition.isPending}
+                    className="rounded bg-slate-800 px-2 py-1 text-xs font-medium text-slate-100 disabled:opacity-50"
+                  >
+                    {transitionPending("REJECTED") ? "却下中…" : "却下"}
+                  </button>
+                </div>
+              )}
+              {item.kind === "dq" && issueId !== null && (
+                <button
+                  onClick={() => resolveIssue.mutate(issueId)}
+                  disabled={resolveIssue.isPending && resolveIssue.variables === issueId}
+                  className="rounded bg-slate-800 px-2 py-1 text-xs font-medium text-slate-100 disabled:opacity-50"
+                >
+                  {resolveIssue.isPending && resolveIssue.variables === issueId ? "解決中…" : "解決"}
+                </button>
+              )}
+              {transition.isError && transition.variables?.edgeId === edgeId && (
+                <p className="text-xs text-reject">
+                  {transition.error instanceof Error ? transition.error.message : "遷移に失敗しました"}
+                </p>
+              )}
+              {resolveIssue.isError && resolveIssue.variables === issueId && (
+                <p className="text-xs text-reject">
+                  {resolveIssue.error instanceof Error ? resolveIssue.error.message : "解決に失敗しました"}
+                </p>
               )}
             </li>
           );

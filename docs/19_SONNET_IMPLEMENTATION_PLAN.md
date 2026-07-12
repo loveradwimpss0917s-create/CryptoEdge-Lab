@@ -181,6 +181,29 @@
   スパーク (paper equity) は対象外 (docs/06 §3 SCR-01 の Portfolio Pulse 未実装と同じ理由 —
   paper_signals の母数がまだ少ない)
 
+### S-98: UIUX監査 — Action Queue が「ゼロインボックス型」を実装していなかった
+
+- **WHY**: S-97 に続けてユーザーから追加のUIUX監査を依頼。docs/06 §1 中核コンセプト1
+  「Action Queue: システムが人間に求める意思決定を単一のキューとして常時表示。
+  ゼロインボックス型」、および §3 SCR-01 のワイヤーフレームは項目①(承認待ち)に
+  `[Dossier を見る] [承認] [却下]` を明示しているが、実際の `ActionQueuePanel`
+  (`TodayScreen.tsx`) は全項目が Edge Dossier へのリンクのみで、承認/却下/DQ解決の
+  いずれも「一旦別画面に移動してからボタンを押す」必要があった。ゼロインボックスの
+  核心 (キュー内で完結) が未実装だった
+- **WHAT**: `approval` kind (verdict=ADOPT かつ status=TESTING、単一の決定的アクションが
+  存在する唯一のケース) に `[承認]`(→VALIDATED)`[却下]`(→REJECTED) をキュー内に追加。
+  `dq` kind に `[解決]` (S-02の既存 `resolveDqIssue` を再利用) を追加。`review` kind
+  (SCREEN_DONE、またはFULL_DONEでもverdict≠ADOPT) は単一の正しいアクションが
+  存在しない (ワイヤーフレームも要約行のみでボタン無し) ため、クリックスルーのまま
+  据え置き — 誤ったデフォルトアクションを機械的に提示しない設計判断
+- **DONE/受入条件**: バックエンド `action-queue.ts` の `ActionItem` に `issue_id` を追加
+  (dq itemのみ実値、他はnull)。`actions.test.ts` に新規テスト2件。フロントは
+  `EdgeCard`と同様、Tailwindの実コンパイル済みCSSで承認/DQ/レビューの3パターンを
+  静的HTMLプレビューし、ボタンの配置・折り返しをPlaywrightで目視確認済み
+- **関連docs**: docs/06 §1 item 1, §3 SCR-01
+- **実行ログ (2026-07-12, Sonnet)**: 実装完了。api 94件 green (新規2件)。
+  typecheck/lint/build 全緑。デプロイ待ち
+
 ### S-03: イベント履歴バックフィル (最重要)
 
 - **WHY**: events が前方収集のみのため、イベント系Edge全てが歴史サンプルゼロで評価不能

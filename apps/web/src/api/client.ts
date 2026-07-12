@@ -210,6 +210,7 @@ export interface ActionItem {
   edge_id: string | null;
   title: string;
   detail: string;
+  issue_id: number | null;
 }
 
 // Lake catalog (docs/08 "Lake パススルー", docs/15 SONNET-8). Parquet bytes

@@ -104,4 +104,31 @@ describe("GET /actions (docs/15 SONNET-7)", () => {
     expect(dqItems).toHaveLength(1);
     expect(dqItems[0]?.title).toBe("DQ-01");
   });
+
+  it("includes issue_id on dq items so the Action Queue can resolve them inline (docs/06 §1 ゼロインボックス)", async () => {
+    await env.DB.prepare(
+      `INSERT INTO dq_issues (detected_at, stream_id, rule_id, severity, status) VALUES (100, 's1', 'DQ-01', 'critical', 'open')`
+    ).run();
+
+    const res = await actionsRoute.request("/", {}, env);
+    const body = (await res.json()) as { items: { kind: string; issue_id: number | null }[] };
+    const dqItem = body.items.find((i) => i.kind === "dq");
+    expect(typeof dqItem?.issue_id).toBe("number");
+  });
+
+  it("sets issue_id to null on approval/review items", async () => {
+    await seedEdgeWithVersion("e1", "TESTING");
+    await env.DB.prepare(
+      `INSERT INTO eval_runs (run_id, edge_version_id, protocol_version, run_kind, dataset_hash, snapshot_id, seed, config, status, finished_at, requested_by, git_sha)
+       VALUES ('r1', 'v-e1', '1.0', 'full', 'h', 's', 0, '{}', 'done', 100, 'test', 'sha')`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO verdicts (run_id, verdict, reasons, thresholds_version, decided_at) VALUES ('r1', 'ADOPT', '[]', 'v1', 100)`
+    ).run();
+
+    const res = await actionsRoute.request("/", {}, env);
+    const body = (await res.json()) as { items: { kind: string; issue_id: number | null }[] };
+    const approvalItem = body.items.find((i) => i.kind === "approval");
+    expect(approvalItem?.issue_id).toBeNull();
+  });
 });

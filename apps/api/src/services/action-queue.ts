@@ -15,6 +15,15 @@ export interface ActionItem {
   edge_id: string | null;
   title: string;
   detail: string;
+  // docs/06 §1 item 1 "ゼロインボックス型" + §3 SCR-01 wireframe (item ①
+  // shows [承認][却下] inline, without a click-through to Dossier first).
+  // Only kinds with a single deterministic action carry one: "approval"
+  // (ADOPT verdict, TESTING status -- accept via edge_id) and "dq" (via
+  // issue_id, reusing the resolve endpoint S-02 already built). "review"
+  // items (SCREEN_DONE, or FULL_DONE without ADOPT) have no single correct
+  // action -- the wireframe itself only shows a summary line for those,
+  // matching genuine human judgment being required.
+  issue_id: number | null;
 }
 
 interface EdgeRow extends EdgeReadinessInputRow {
@@ -27,6 +36,7 @@ interface LatestVerdictRow {
 }
 
 interface DqIssueRow {
+  issue_id: number;
   stream_id: string;
   rule_id: string;
   severity: string;
@@ -60,7 +70,7 @@ export async function computeActionQueue(env: Env): Promise<ActionItem[]> {
   const [edgesResult, dqResult] = await Promise.all([
     env.DB.prepare(`SELECT edge_id, title, status, readiness_class, readiness_blockers FROM edges`).all<EdgeRow>(),
     env.DB.prepare(
-      `SELECT stream_id, rule_id, severity, detected_at FROM dq_issues
+      `SELECT issue_id, stream_id, rule_id, severity, detected_at FROM dq_issues
        WHERE status = 'open' AND severity = 'critical' ORDER BY detected_at DESC LIMIT 10`
     ).all<DqIssueRow>()
   ]);
@@ -81,18 +91,26 @@ export async function computeActionQueue(env: Env): Promise<ActionItem[]> {
           kind: "approval",
           edge_id: edge.edge_id,
           title: edge.title,
-          detail: "ADOPT -> TESTING→VALIDATEDの承認待ち"
+          detail: "ADOPT -> TESTING→VALIDATEDの承認待ち",
+          issue_id: null
         });
       } else {
         items.push({
           kind: "review",
           edge_id: edge.edge_id,
           title: edge.title,
-          detail: `full評価結果 (${verdict ?? "verdict未確定"}) のレビュー待ち`
+          detail: `full評価結果 (${verdict ?? "verdict未確定"}) のレビュー待ち`,
+          issue_id: null
         });
       }
     } else if (state === "SCREEN_DONE") {
-      items.push({ kind: "review", edge_id: edge.edge_id, title: edge.title, detail: "screen評価結果のレビュー待ち" });
+      items.push({
+        kind: "review",
+        edge_id: edge.edge_id,
+        title: edge.title,
+        detail: "screen評価結果のレビュー待ち",
+        issue_id: null
+      });
     }
   }
 
@@ -101,7 +119,8 @@ export async function computeActionQueue(env: Env): Promise<ActionItem[]> {
       kind: "dq",
       edge_id: null,
       title: issue.rule_id,
-      detail: `${issue.stream_id} (critical, ${new Date(issue.detected_at).toISOString().slice(0, 10)})`
+      detail: `${issue.stream_id} (critical, ${new Date(issue.detected_at).toISOString().slice(0, 10)})`,
+      issue_id: issue.issue_id
     });
   }
 
